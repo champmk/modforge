@@ -740,17 +740,20 @@ export class EraBridge {
     // (b) the member itself was renamed.
     const me = this.renames.memberRename(ownerSource, kind, name, descSource);
     if (me) {
-      const exact = this.findInHierarchy(effectiveOwner, kind, me.to.name ?? name, descSource);
+      // Member entries always carry a to-name; `?? name` is a defensive identity
+      // fallback that also narrows string|undefined → string (exactOptionalPropertyTypes).
+      const toName = me.to.name ?? name;
+      const exact = this.findInHierarchy(effectiveOwner, kind, toName, descSource);
       if (exact) {
         candidates.push({
-          to: { kind, owner: exact.owner, name: me.to.name, desc: exact.desc },
-          evidence: `${me.evidence} Grounded in ${this.target.id}: ${exact.owner}#${me.to.name} exists with the identical descriptor.`,
+          to: { kind, owner: exact.owner, name: toName, desc: exact.desc },
+          evidence: `${me.evidence} Grounded in ${this.target.id}: ${exact.owner}#${toName} exists with the identical descriptor.`,
           score: me.score,
         });
       } else {
-        const byName = this.findNameInHierarchy(effectiveOwner, kind, me.to.name ?? name);
+        const byName = this.findNameInHierarchy(effectiveOwner, kind, toName);
         if (byName) {
-          const to: SymbolRef = { kind, owner: byName.owner, name: me.to.name };
+          const to: SymbolRef = { kind, owner: byName.owner, name: toName };
           let evidence: string;
           if (byName.descs.length === 1) {
             to.desc = byName.descs[0]!;
@@ -760,8 +763,8 @@ export class EraBridge {
           }
           candidates.push({ to, evidence, score: me.score });
         } else {
-          chain.push(`rename-layer: member entry ${name} → ${me.to.name} REJECTED (no such name reachable from ${effectiveOwner} in ${this.target.id})`);
-          rejected.push(`member rename ${name} → ${me.to.name} rejected: not grounded in target jar (stale table)`);
+          chain.push(`rename-layer: member entry ${name} → ${toName} REJECTED (no such name reachable from ${effectiveOwner} in ${this.target.id})`);
+          rejected.push(`member rename ${name} → ${toName} rejected: not grounded in target jar (stale table)`);
         }
       }
     }
