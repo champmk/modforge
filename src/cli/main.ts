@@ -41,7 +41,7 @@ import {
   type Finding,
 } from '../report/report.ts';
 import { planGradleMigration, applyGradleMigration } from '../scan/gradle.ts';
-import { findMixinConfigs, scanMixinSource, collectTargetChecks, type MixinClassScan } from '../scan/mixin.ts';
+import { findMixinConfigs, scanMixinSource, collectTargetChecks, checkTargetsAgainstJar, type MixinClassScan } from '../scan/mixin.ts';
 
 const USAGE = `modforge — deterministic cross-version migration engine for Minecraft mods
 
@@ -352,34 +352,37 @@ async function cmdMixinCheck(args: Args): Promise<void> {
   for (const err of errors) console.error(`modforge:   config error: ${err.file}: ${err.error}`);
   const scans = collectMixinClassScans(dir);
   const checks = collectTargetChecks(scans);
+  const verdicts = checkTargetsAgainstJar(checks, target);
   let present = 0;
   let absent = 0;
+  let info = 0;
   let unparseable = 0;
-  for (const c of checks) {
-    if (!c.ref.owner) {
-      unparseable++;
-      console.log(`UNPARSEABLE  ${c.surface} in ${c.mixinClass} (${c.file}:${c.line}) — ${c.note ?? 'no owner derivable'}`);
-      continue;
-    }
-    const cls = target.classes.get(c.ref.owner);
-    if (!cls) {
-      absent++;
-      console.log(`ABSENT       ${c.ref.owner} — target class not in ${targetVersion} (${c.surface} in ${c.mixinClass}, ${c.file}:${c.line})`);
-      continue;
-    }
-    if (c.ref.name) {
-      const list = [...cls.methods, ...cls.fields];
-      const hit = list.some((m) => m.name === c.ref.name && (!c.ref.desc || m.desc === c.ref.desc));
-      if (hit) present++;
-      else {
+  for (const v of verdicts) {
+    const c = v.check;
+    const label = (c.ref.owner ?? '') + (c.ref.name ? `#${c.ref.name}${c.ref.desc ?? ''}` : '');
+    switch (v.status) {
+      case 'present':
+        present++;
+        break;
+      case 'info':
+        info++;
+        console.log(`INFO         ${label} — ${v.note} (${c.surface} in ${c.mixinClass}, ${c.file}:${c.line})`);
+        break;
+      case 'unparseable':
+        unparseable++;
+        console.log(`UNPARSEABLE  ${c.surface} in ${c.mixinClass} (${c.file}:${c.line}) — ${v.note ?? 'no owner derivable'}`);
+        break;
+      case 'absent':
         absent++;
-        console.log(`ABSENT       ${c.ref.owner}#${c.ref.name}${c.ref.desc ?? ''} — member not found in ${targetVersion} (${c.surface}, ${c.file}:${c.line})`);
-      }
-    } else {
-      present++;
+        if (c.ref.name) {
+          console.log(`ABSENT       ${c.ref.owner}#${c.ref.name}${c.ref.desc ?? ''} — member not found in ${targetVersion} (${c.surface}, ${c.file}:${c.line})`);
+        } else {
+          console.log(`ABSENT       ${c.ref.owner} — target class not in ${targetVersion} (${c.surface} in ${c.mixinClass}, ${c.file}:${c.line})`);
+        }
+        break;
     }
   }
-  console.log(`\nmixin-check vs ${targetVersion}: ${present} present, ${absent} ABSENT (break on this version), ${unparseable} unparseable`);
+  console.log(`\nmixin-check vs ${targetVersion}: ${present} present, ${absent} ABSENT (break on this version), ${info} not verifiable (outside Minecraft), ${unparseable} unparseable`);
   console.log(`note: this is signature-level verification; instruction-level @At verification ships next (a signature can match while the targeted instruction is gone).`);
 }
 

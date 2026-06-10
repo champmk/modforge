@@ -30,6 +30,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { JarApi } from '../core/model.ts';
 
 // ---------------------------------------------------------------------------
 // Public model
@@ -1174,6 +1175,166 @@ export function collectTargetChecks(scans: MixinClassScan[]): MixinTargetCheck[]
       cmp(a.note ?? '', b.note ?? ''),
   );
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Verdicts: check each MixinTargetCheck against a concrete target jar
+// ---------------------------------------------------------------------------
+
+/**
+ * One verdict for one `MixinTargetCheck` against a concrete target jar.
+ *
+ * Both `status` and `note` are version-FREE — the CLI adds the target-version
+ * string when it renders. `info` is the honest "outside Minecraft / inherited
+ * from outside the jar" bucket: it is NOT a break and is NEVER reported `absent`.
+ * A JDK/library/mod owner or an inherited member flagged ABSENT would be a
+ * confidently-wrong break verdict — the exact failure class this tool must
+ * never produce.
+ */
+export interface MixinVerdict {
+  check: MixinTargetCheck;
+  status: 'present' | 'absent' | 'info' | 'unparseable';
+  /** Version-free explanation: inheritance source / why unverifiable / near-miss descriptor(s). */
+  note?: string;
+}
+
+/** java.lang.Object methods every class inherits from outside any application jar. */
+const OBJECT_METHODS = new Set([
+  'toString', 'hashCode', 'equals', 'getClass', 'clone', 'finalize', 'notify', 'notifyAll', 'wait',
+]);
+
+/** True only for owners the target jar can actually be expected to contain. */
+function isMinecraftOwner(owner: string): boolean {
+  return owner.startsWith('net/minecraft/') || owner.startsWith('com/mojang/');
+}
+
+/**
+ * Deterministic walk over an owner's hierarchy IN THE TARGET JAR: the owner
+ * itself first, then a BFS over supertypes (superclass before interfaces at each
+ * level, interfaces in declared order; the owner excluded from the BFS). Branches
+ * leave the walk at classes absent from the jar (JDK etc.) — mirror of the
+ * documented walks at src/mcp/engine.ts:176-196 and src/bridge/bridge.ts:535-560.
+ */
+function* walkOwnerHierarchy(target: JarApi, owner: string): Generator<string> {
+  yield owner;
+  const seen = new Set<string>([owner]);
+  const queue: string[] = [];
+  const start = target.classes.get(owner);
+  if (start) {
+    if (start.superName) queue.push(start.superName);
+    queue.push(...start.interfaces);
+  }
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    yield cur;
+    const cls = target.classes.get(cur);
+    if (cls) {
+      if (cls.superName) queue.push(cls.superName);
+      queue.push(...cls.interfaces);
+    }
+  }
+}
+
+interface MemberWalkResult {
+  /** Binary name of the class declaring an exact match; absent when none was found. */
+  declarer?: string;
+  /** Descriptors seen for the name when a descriptor was given and every one differed. */
+  nearMisses: string[];
+}
+
+/**
+ * Search the owner's declared members, then its target-jar hierarchy, for a
+ * member named `name`. When `desc` is given the match must agree on it; names
+ * found only with a differing descriptor are collected as near-misses.
+ */
+function walkForMember(target: JarApi, owner: string, name: string, desc: string | undefined): MemberWalkResult {
+  const nearMisses = new Set<string>();
+  for (const cn of walkOwnerHierarchy(target, owner)) {
+    const cls = target.classes.get(cn);
+    if (cls === undefined) continue; // outside the jar — nothing declared to inspect
+    for (const m of [...cls.methods, ...cls.fields]) {
+      if (m.name !== name) continue;
+      if (desc === undefined || m.desc === desc) return { declarer: cn, nearMisses: [] };
+      nearMisses.add(m.desc);
+    }
+  }
+  return { nearMisses: [...nearMisses].sort() };
+}
+
+function verdictForCheck(check: MixinTargetCheck, target: JarApi): MixinVerdict {
+  const owner = check.ref.owner;
+  // 1 — no owner: unparseable, carrying the check's own note (else a default).
+  if (owner === undefined) {
+    return { check, status: 'unparseable', note: check.note ?? 'no owner derivable' };
+  }
+  // 2 — owner outside Minecraft: not verifiable against the jar, never a break.
+  if (!isMinecraftOwner(owner)) {
+    return {
+      check,
+      status: 'info',
+      note: 'outside Minecraft (JDK / library / mod class) — not verifiable against the target jar; NOT a break verdict',
+    };
+  }
+  // 3 — Minecraft owner missing from the jar: a real (renamed) break.
+  if (!target.classes.has(owner)) {
+    return {
+      check,
+      status: 'absent',
+      note: 'target class not found under this name — it may have been renamed; modforge bridge resolves renames',
+    };
+  }
+  // 4 — class-only check on a present class.
+  const name = check.ref.name;
+  if (name === undefined) {
+    return { check, status: 'present' };
+  }
+  // 5 — member check: owner's declared members, then the target-jar hierarchy.
+  const found = walkForMember(target, owner, name, check.ref.desc);
+  if (found.declarer !== undefined) {
+    return found.declarer === owner
+      ? { check, status: 'present' }
+      : { check, status: 'present', note: `inherited from ${found.declarer}` };
+  }
+  // 6 — an Object method inherited from outside the jar: not verifiable, never a break.
+  if (OBJECT_METHODS.has(name)) {
+    return {
+      check,
+      status: 'info',
+      note: 'java.lang.Object method inherited from outside the jar — not verifiable against the target jar; NOT a break verdict',
+    };
+  }
+  // 7 — name seen but every descriptor differs: a near-miss break, naming what was seen.
+  if (found.nearMisses.length > 0) {
+    return {
+      check,
+      status: 'absent',
+      note: `member name found with a different descriptor (${found.nearMisses.join(', ')}) — the targeted descriptor was not declared in the target class or its supertypes`,
+    };
+  }
+  // member name nowhere in the walked hierarchy: a plain break.
+  return {
+    check,
+    status: 'absent',
+    note: 'member not found in the target class or its supertypes — it may have been renamed; modforge bridge resolves renames',
+  };
+}
+
+/**
+ * Verdict each check against a concrete target jar. Pure and deterministic:
+ * output order equals input order, each verdict carries the very check object it
+ * came from, and no clock or randomness is consulted. The owner-namespace and
+ * inherited-member rules live here so the CLI and report layers share one
+ * source of truth instead of re-deriving "break" verdicts ad hoc.
+ */
+export function checkTargetsAgainstJar(
+  checks: readonly MixinTargetCheck[],
+  target: JarApi,
+): MixinVerdict[] {
+  const verdicts: MixinVerdict[] = [];
+  for (const check of checks) verdicts.push(verdictForCheck(check, target));
+  return verdicts;
 }
 
 // ---------------------------------------------------------------------------
