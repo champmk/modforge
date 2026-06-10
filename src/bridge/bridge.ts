@@ -182,26 +182,28 @@ export class EraBridge {
         chain,
       };
     }
-    if (!this.target.classes.has(ce.to)) {
+    // RenameEntry.to is a SymbolRef — the proposed class lives in `.owner`.
+    const ceTo = ce.to.owner;
+    if (!this.target.classes.has(ceTo)) {
       // A rename candidate pointing at a class absent from the target jar is worse
       // than no answer — reject it loudly instead of presenting it.
-      chain.push(`rename-layer: entry ${sourceName} → ${ce.to} REJECTED (not present in ${this.target.id})`);
+      chain.push(`rename-layer: entry ${sourceName} → ${ceTo} REJECTED (not present in ${this.target.id})`);
       return {
         from,
         confidence: 'UNRESOLVED',
-        reason: `${baseReason} A rename-layer entry ${sourceName} → ${ce.to} exists but ${ce.to} is not in ${this.target.id} (stale table) — rejected.`,
+        reason: `${baseReason} A rename-layer entry ${sourceName} → ${ceTo} exists but ${ceTo} is not in ${this.target.id} (stale table) — rejected.`,
         chain,
       };
     }
-    chain.push(`rename-layer: ${sourceName} → ${ce.to} (score ${ce.score})`);
-    chain.push(`target(${this.target.id}): class ${ce.to} present`);
+    chain.push(`rename-layer: ${sourceName} → ${ceTo} (score ${ce.score})`);
+    chain.push(`target(${this.target.id}): class ${ceTo} present`);
     return {
       from,
       confidence: 'CANDIDATE',
       candidates: [
         {
-          to: { kind: 'class', owner: ce.to },
-          evidence: `${ce.evidence} Grounded: ${ce.to} exists in ${this.target.id}.`,
+          to: { kind: 'class', owner: ceTo },
+          evidence: `${ce.evidence} Grounded: ${ceTo} exists in ${this.target.id}.`,
           score: ce.score,
         },
       ],
@@ -716,10 +718,11 @@ export class EraBridge {
     if (!this.target.classes.has(ownerSource)) {
       const ce = this.renames.classRename(ownerSource);
       if (ce) {
-        if (this.target.classes.has(ce.to)) {
-          effectiveOwner = ce.to;
-          chain.push(`rename-layer: class ${ownerSource} → ${ce.to} (score ${ce.score})`);
-          const f = this.findInHierarchy(ce.to, kind, name, descSource);
+        const ceTo = ce.to.owner; // RenameEntry.to is a SymbolRef
+        if (this.target.classes.has(ceTo)) {
+          effectiveOwner = ceTo;
+          chain.push(`rename-layer: class ${ownerSource} → ${ceTo} (score ${ce.score})`);
+          const f = this.findInHierarchy(ceTo, kind, name, descSource);
           if (f) {
             candidates.push({
               to: { kind, owner: f.owner, name, desc: f.desc },
@@ -728,8 +731,8 @@ export class EraBridge {
             });
           }
         } else {
-          chain.push(`rename-layer: class entry ${ownerSource} → ${ce.to} REJECTED (not present in ${this.target.id})`);
-          rejected.push(`class rename ${ownerSource} → ${ce.to} rejected: target class absent (stale table)`);
+          chain.push(`rename-layer: class entry ${ownerSource} → ${ce.to.owner} REJECTED (not present in ${this.target.id})`);
+          rejected.push(`class rename ${ownerSource} → ${ce.to.owner} rejected: target class absent (stale table)`);
         }
       }
     }
@@ -737,17 +740,17 @@ export class EraBridge {
     // (b) the member itself was renamed.
     const me = this.renames.memberRename(ownerSource, kind, name, descSource);
     if (me) {
-      const exact = this.findInHierarchy(effectiveOwner, kind, me.to, descSource);
+      const exact = this.findInHierarchy(effectiveOwner, kind, me.to.name ?? name, descSource);
       if (exact) {
         candidates.push({
-          to: { kind, owner: exact.owner, name: me.to, desc: exact.desc },
-          evidence: `${me.evidence} Grounded in ${this.target.id}: ${exact.owner}#${me.to} exists with the identical descriptor.`,
+          to: { kind, owner: exact.owner, name: me.to.name, desc: exact.desc },
+          evidence: `${me.evidence} Grounded in ${this.target.id}: ${exact.owner}#${me.to.name} exists with the identical descriptor.`,
           score: me.score,
         });
       } else {
-        const byName = this.findNameInHierarchy(effectiveOwner, kind, me.to);
+        const byName = this.findNameInHierarchy(effectiveOwner, kind, me.to.name ?? name);
         if (byName) {
-          const to: SymbolRef = { kind, owner: byName.owner, name: me.to };
+          const to: SymbolRef = { kind, owner: byName.owner, name: me.to.name };
           let evidence: string;
           if (byName.descs.length === 1) {
             to.desc = byName.descs[0]!;
@@ -757,8 +760,8 @@ export class EraBridge {
           }
           candidates.push({ to, evidence, score: me.score });
         } else {
-          chain.push(`rename-layer: member entry ${name} → ${me.to} REJECTED (no such name reachable from ${effectiveOwner} in ${this.target.id})`);
-          rejected.push(`member rename ${name} → ${me.to} rejected: not grounded in target jar (stale table)`);
+          chain.push(`rename-layer: member entry ${name} → ${me.to.name} REJECTED (no such name reachable from ${effectiveOwner} in ${this.target.id})`);
+          rejected.push(`member rename ${name} → ${me.to.name} rejected: not grounded in target jar (stale table)`);
         }
       }
     }
