@@ -5,5 +5,6 @@ _research/
 _internal/
 
 node_modules/
+dist/
 .modforge-backup/
 *.log

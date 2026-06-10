@@ -147,7 +147,7 @@ async function cmdBridge(args: Args): Promise<void> {
     findings.push(makeFinding({ file: f.file, line: f.line, col: f.col, surface: f.kind }, resolution));
   }
   const report = makeReport(
-    { tool: 'modforge', version: '0.1.0', fromVersion: from, toVersion: to, namespace: ns, generatedFor: dir },
+    { tool: 'modforge', version: '0.1.1', fromVersion: from, toVersion: to, namespace: ns, generatedFor: dir },
     findings,
   );
 

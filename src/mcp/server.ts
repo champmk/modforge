@@ -6,8 +6,8 @@
  * Help:           node src/mcp/server.ts --help
  * Claude Code:    claude mcp add modforge -- node <abs-path>/src/mcp/server.ts
  * Cursor/VSCode:  { "command": "node", "args": ["<abs-path>/src/mcp/server.ts"] }
- * (Bin note: wire `"modforge-mcp": "./src/mcp/server.ts"` into package.json `bin`
- * when the package is published — the file is already shebanged and self-contained.)
+ * Installed via npm, this file ships compiled (dist/mcp/server.js) behind the
+ * `modforge-mcp` bin: `claude mcp add modforge -- modforge-mcp`.
  *
  * Protocol: MCP over stdio — newline-delimited JSON-RPC 2.0: one UTF-8 JSON
  * object per line, no embedded newlines, NO Content-Length framing (verified
@@ -40,7 +40,7 @@ import { ArtifactUnavailableError, FetchError } from '../mappings/fetch.ts';
 import { toBinaryName } from '../core/model.ts';
 
 const SERVER_NAME = 'modforge-mcp';
-const SERVER_VERSION = '0.1.0';
+const SERVER_VERSION = '0.1.1';
 
 /** Protocol revisions this server speaks (the tools subset is identical in all). */
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;

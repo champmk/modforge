@@ -122,8 +122,11 @@ Five tools:
 Install into Claude Code:
 
 ```bash
-claude mcp add modforge -- node <abs-path>/src/mcp/server.ts
+npm install -g modforge
+claude mcp add modforge -- modforge-mcp
 ```
+
+(From a repo clone instead: `claude mcp add modforge -- node <abs-path>/src/mcp/server.ts`.)
 
 Any MCP-capable client works the same way -- Cursor, Copilot, or your own agent: point it
 at `src/mcp/server.ts` over stdio.
