@@ -18,9 +18,10 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { applyToDisk, type PatchOp } from '../src/patch/patch.ts';
 
-const REPO = 'C:/Users/paci0/Desktop/modforge';
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 
 // A minimal fabric project: a loom plugin block + the three version properties
 // the migrator rewrites. Both files get rewritten on a first --apply, so a

@@ -22,9 +22,10 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { applyToDisk, BACKUP_DIR, type PatchOp } from '../src/patch/patch.ts';
 
-const REPO = 'C:/Users/paci0/Desktop/modforge';
+const REPO = fileURLToPath(new URL('..', import.meta.url));
 
 /** One text-replacement op; its span is hand-derived against the DECODED text. */
 function tokenOp(file: string, decoded: string, token: string, after: string): PatchOp {
