@@ -16,6 +16,33 @@
 // JVM API surface (parsed from classfiles)
 // ---------------------------------------------------------------------------
 
+/**
+ * One member-reference instruction extracted from a method body (Code attribute).
+ *
+ * Invariants:
+ * - Instruction-stream order is load-bearing (mixin `@At(..., ordinal=n)` matches
+ *   the n-th occurrence) — lists of CodeRef are NEVER sorted.
+ * - `owner` is normally a class binary name, but JVMS permits array classes in
+ *   CONSTANT_Class, so it may be an array descriptor (e.g. `[Ljava/lang/Object;`
+ *   for `clone()` on an array receiver).
+ * - invokedynamic call sites are deliberately excluded: they have no static
+ *   owner/name/desc triple (bootstrap-driven), and emitting a guess would
+ *   violate the honesty taxonomy.
+ */
+export interface CodeRef {
+  /**
+   * Lowercase JVMS mnemonic, one of: `getstatic` | `putstatic` | `getfield` |
+   * `putfield` | `invokevirtual` | `invokespecial` | `invokestatic` | `invokeinterface`.
+   */
+  op: string;
+  /** Referenced owner (class binary name; may be an array descriptor — see above). */
+  owner: string;
+  /** Referenced member name. */
+  name: string;
+  /** Referenced member descriptor (field type or method `(args)ret`). */
+  desc: string;
+}
+
 export interface MemberApi {
   /** Member name (`<init>` / `<clinit>` for constructors / static initializers). */
   name: string;
@@ -25,6 +52,21 @@ export interface MemberApi {
   access: number;
   /** Generic signature from the Signature attribute, when present. */
   signature?: string;
+  /**
+   * Parameter names from the MethodParameters attribute (compiled with
+   * `javac -parameters`). Index-aligned with the attribute's slots; `''` marks
+   * an unnamed slot (name_index 0). Absent when the attribute is absent —
+   * absence is "not recorded", never a guess.
+   */
+  paramNames?: string[];
+  /**
+   * Member-reference instructions in stream order. Present (possibly empty) iff
+   * the classfile was parsed with `scanCode` AND this method has a Code
+   * attribute; absent for abstract/native methods and on the metadata-only
+   * fast path. The empty-vs-absent distinction is meaningful: `[]` means "body
+   * scanned, zero member refs"; absent means "body not scanned / no body".
+   */
+  codeRefs?: CodeRef[];
 }
 
 export interface ClassApi {
@@ -39,6 +81,14 @@ export interface ClassApi {
   fields: MemberApi[];
   /** Generic signature of the class itself, when present. */
   signature?: string;
+  /** Present (and true) iff the classfile carries a Record attribute (java record). */
+  isRecord?: boolean;
+  /**
+   * PermittedSubclasses attribute entries (sealed types), as binary names.
+   * Sorted lexicographically — the attribute is semantically a set, and sorted
+   * output keeps cross-version diffs stable.
+   */
+  permittedSubclasses?: string[];
 }
 
 /** The full API surface of one game version (or any jar). */

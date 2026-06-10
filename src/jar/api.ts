@@ -13,6 +13,11 @@ export interface JarApiOptions {
   classFilter?: (binaryName: string) => boolean;
   /** Collect parse errors instead of throwing (default: throw on first error — honesty first). */
   collectErrors?: boolean;
+  /**
+   * Walk method bodies and populate `MemberApi.codeRefs` (instruction-level
+   * mixin verification). Slower than the metadata fast path; off by default.
+   */
+  scanCode?: boolean;
 }
 
 export interface JarApiResult {
@@ -37,7 +42,7 @@ export function extractJarApi(buf: Buffer, id: string, opts: JarApiOptions = {})
     if (opts.classFilter && !opts.classFilter(binaryName)) continue;
 
     try {
-      const api = parseClassFile(zip.read(name));
+      const api = parseClassFile(zip.read(name), { scanCode: opts.scanCode === true });
       // Sanity: entry path should match the class's own name (jar hygiene).
       if (api.binaryName !== binaryName) {
         throw new Error(`entry path ${binaryName} != this_class ${api.binaryName}`);
