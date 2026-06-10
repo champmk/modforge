@@ -134,7 +134,18 @@ async function cmdBridge(args: Args): Promise<void> {
   }
 
   const cache = new FetchCache();
-  const bridge = await buildBridge(cache, from, to);
+  let bridge: EraBridge;
+  try {
+    bridge = await buildBridge(cache, from, to);
+  } catch (e) {
+    // The most common usage mistake: --from/--to reversed (new era as the
+    // source). Detectable because the bridge needs the FROM version's
+    // mappings, which only exist for the old era.
+    if (e instanceof ArtifactUnavailableError && e.code === 'NO_MOJANG_MAPPINGS') {
+      fail(`${e.message}\n\nDid you mean:  modforge bridge --from ${to} --to ${from} ${dir}`, 1);
+    }
+    throw e;
+  }
 
   const scan = scanTree(dir);
   console.error(`modforge: scanned ${scan.files.length} files, ${scan.findings.length} references (${scan.errors.length} file errors)`);
