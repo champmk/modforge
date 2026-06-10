@@ -537,6 +537,13 @@ class FileScanner {
   private readonly localMethods = new Set<string>();
   /** var name → declared type; 'conflict' when redeclared with differing types. */
   private readonly varTypes = new Map<string, VarDecl | 'conflict'>();
+  /**
+   * Names bound WITHOUT a lexically derivable type anywhere in this file
+   * (lambda parameters, `var` declarations). varTypes is flat per file, so a
+   * name in this set can never be a provable member receiver — a typed
+   * declaration elsewhere may not be the binding a given use site sees.
+   */
+  private readonly untypedVars = new Set<string>();
   private readonly findings: JavaFinding[] = [];
   private readonly parens: ParenKind[] = [];
   private nextParen: ParenKind | null = null;
@@ -683,6 +690,42 @@ class FileScanner {
         const prev = this.at(i - 1);
         if (prev && prev.text !== '.' && prev.text !== 'new' && (prev.kind === 'ident' || prev.text === '>' || prev.text === ']')) {
           this.localMethods.add(t.text);
+        }
+      }
+      // Untyped bindings: lambda parameters. `x ->` binds x; `(a, b) ->` binds
+      // a and b ONLY when the parenthesized list is bare idents and commas — a
+      // typed list ((Type x) ->) has consecutive idents and is handled by the
+      // declaration detector instead. (`case FOO ->` also matches the bare
+      // form; marking an enum constant untyped only ever degrades to a skip.)
+      if (t.text === '->') {
+        const prev = this.at(i - 1);
+        if (prev && prev.kind === 'ident') {
+          this.untypedVars.add(prev.text);
+        } else if (prev && prev.text === ')') {
+          const params: Tok[] = [];
+          let depth = 1;
+          let j = i - 2;
+          while (j >= 0 && depth > 0) {
+            const tj = this.toks[j]!;
+            if (tj.text === ')') depth++;
+            else if (tj.text === '(') depth--;
+            if (depth > 0) params.push(tj);
+            j--;
+          }
+          params.reverse();
+          const bareList =
+            params.length % 2 === 1 &&
+            params.every((p, k) => (k % 2 === 0 ? p.kind === 'ident' : p.text === ','));
+          if (bareList) for (let k = 0; k < params.length; k += 2) this.untypedVars.add(params[k]!.text);
+        }
+      }
+      // Untyped bindings: `var x = ...` and `for (var x : ...)`. `var` cannot
+      // be a type or variable name in source new enough to use it.
+      if (t.kind === 'ident' && t.text === 'var') {
+        const name = this.at(i + 1);
+        const term = this.at(i + 2);
+        if (name && name.kind === 'ident' && term && (term.text === '=' || term.text === ':')) {
+          this.untypedVars.add(name.text);
         }
       }
     }
@@ -1057,6 +1100,14 @@ class FileScanner {
       const isCall = afterChainTok?.text === '(';
       const argCount = isCall ? countCallArgs(this.toks, end) : null;
       if (segs.length === 2) {
+        if (this.untypedVars.has(segs[0]!)) {
+          this.emit('member-unresolved-receiver', t.off, chain, {
+            memberName,
+            memberKind: isCall ? 'method' : 'field',
+            note: `receiver '${segs[0]}' is bound as a lambda parameter or 'var' in this file — its type is not lexically derivable`,
+          });
+          return isCall ? end + 1 : end;
+        }
         const v = this.varTypes.get(segs[0]!);
         if (v !== undefined) {
           if (v === 'conflict') {
