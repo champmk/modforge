@@ -1,0 +1,15 @@
+{
+  "name": "modforge",
+  "version": "0.1.0",
+  "description": "Deterministic cross-version migration engine for Minecraft mods — bridge the 1.21.x → 26.x era and every version after, grounded in real mappings and real jars, never guesses.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "bin": { "modforge": "./src/cli/main.ts" },
+  "scripts": {
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["minecraft", "modding", "fabric", "neoforge", "migration", "mappings", "yarn", "mojmap", "porting", "26.1"],
+  "devDependencies": {}
+}
