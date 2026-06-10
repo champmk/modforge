@@ -798,8 +798,14 @@ function errMsg(e: unknown): string {
  * - Files are processed in sorted-path order; outcomes are deterministic given
  *   identical disk state.
  *
- * Encoding: files are read and written as UTF-8; planners must have produced
- * offsets against identically-decoded text — any skew fails the `before`
+ * Encoding: each file is read as a raw Buffer and refused WHOLE if it is not
+ * valid UTF-8 — i.e. its bytes do not survive a UTF-8 decode/re-encode
+ * round-trip. The refusal names the offset of the first non-roundtripping byte
+ * and the file is neither written nor backed up, so non-UTF-8 source (e.g. a
+ * stray CP-1252 byte) is never silently corrupted to U+FFFD. Valid files —
+ * including a UTF-8 BOM and CRLF line endings, both of which round-trip — are
+ * decoded as UTF-8 and patched as usual; offsets were produced against the
+ * identically-decoded text, so any remaining skew fails the `before`
  * verification and refuses the file rather than corrupting it.
  */
 export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): FileApplyOutcome[] {
@@ -833,9 +839,9 @@ export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): File
     const { abs, rel } = resolved.get(file)!;
     const fileOps = byFile.get(file)!;
 
-    let text: string;
+    let buf: Buffer;
     try {
-      text = readFileSync(abs, 'utf8');
+      buf = readFileSync(abs);
     } catch (e) {
       outcomes.push({
         file,
@@ -846,6 +852,28 @@ export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): File
       });
       continue;
     }
+
+    // Refuse non-UTF-8 files WHOLE: if the bytes do not survive a UTF-8
+    // decode/re-encode round-trip, a lossy decode would silently rewrite bytes
+    // no op targeted (U+FFFD). The file is left untouched and unbacked-up.
+    const roundtrip = Buffer.from(buf.toString('utf8'), 'utf8');
+    if (!roundtrip.equals(buf)) {
+      let off = 0;
+      const lim = Math.min(buf.length, roundtrip.length);
+      while (off < lim && buf[off] === roundtrip[off]) off++;
+      outcomes.push({
+        file,
+        absPath: abs,
+        applied: [],
+        refused: [...fileOps].sort(byOpOrder).map((op) => ({
+          op,
+          reason: `file is not valid UTF-8 (first invalid byte at offset ${off}) — convert it to UTF-8, then re-run; the file was left untouched`,
+        })),
+        written: false,
+      });
+      continue;
+    }
+    const text = buf.toString('utf8');
 
     const result = applyPatches(text, fileOps);
     if (result.refused.length > 0 || result.text === text) {

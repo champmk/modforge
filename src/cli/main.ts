@@ -16,7 +16,7 @@
  * All artifacts (manifests, jars, mappings) are fetched from official sources,
  * sha1-verified, and cached under ~/.modforge/cache — nothing is redistributed.
  */
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, copyFileSync } from 'node:fs';
 import { join, relative, dirname } from 'node:path';
 import { FetchCache, ArtifactUnavailableError, FetchError } from '../mappings/fetch.ts';
 import { parseTinyV2 } from '../mappings/tiny.ts';
@@ -305,7 +305,15 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
       if (e.isDirectory()) {
         if (!['build', '.gradle', '.git', 'node_modules', 'run', '.modforge-backup'].includes(e.name)) walk(p);
       } else if (wanted.has(e.name) || e.name.endsWith('.mixins.json') || e.name.endsWith('.accesswidener')) {
-        files.push({ path: p.replace(/\\/g, '/'), text: readFileSync(p, 'utf8') });
+        const norm = p.replace(/\\/g, '/');
+        const buf = readFileSync(p);
+        // Exclude non-UTF-8 files WHOLE: a lossy decode would rewrite the
+        // backup and the live file with U+FFFD where the original bytes were.
+        if (!Buffer.from(buf.toString('utf8'), 'utf8').equals(buf)) {
+          console.error(`modforge: ${norm} is not valid UTF-8 — convert it to UTF-8 and re-run; it was excluded from this migration.`);
+          continue;
+        }
+        files.push({ path: norm, text: buf.toString('utf8') });
       }
     }
   };
@@ -323,9 +331,12 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
         // .modforge-backup/ before writing (first-run copy preserved).
         const rel = relative(dir, f.path) || f.path;
         const backupPath = join(dir, '.modforge-backup', rel);
+        // Raw byte copy of the ORIGINAL file, taken before the rewrite below —
+        // never a writeFileSync of the decoded string (that would mojibake any
+        // multibyte content). First-run copy preserved across re-runs.
         if (!existsSync(backupPath)) {
           mkdirSync(dirname(backupPath), { recursive: true });
-          writeFileSync(backupPath, originals.get(f.path)!);
+          copyFileSync(f.path, backupPath);
         }
         writeFileSync(f.path, f.text);
         written++;
