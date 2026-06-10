@@ -4,7 +4,7 @@
  *
  *   modforge bridge --from 1.21.11 --to 26.1.2 [--namespace named|source] <src-dir>
  *                   [--json] [--out report.md]
- *   modforge delta  --from 26.1.2 --to 26.2-pre-5 [--json]
+ *   modforge delta  --from 26.1.2 --to 26.2-pre-5 [--json] [--out delta.md]
  *   modforge gradle-migrate <project-dir> [--apply]
  *   modforge mixin-check --target 26.1.2 <src-dir>
  *   modforge versions
@@ -25,6 +25,7 @@ import { extractJarApi } from '../jar/api.ts';
 import { EraBridge, type OldHierarchyEntry, type SourceNamespace } from '../bridge/bridge.ts';
 import { buildRenameTable, surfaceFromMojmap } from '../bridge/renames.ts';
 import { computeDelta } from '../delta/delta.ts';
+import { renderDeltaMarkdown } from '../report/delta-md.ts';
 import { scanTree, type JavaFinding } from '../scan/java.ts';
 import {
   makeFinding,
@@ -43,7 +44,7 @@ const USAGE = `modforge — deterministic cross-version migration engine for Min
 
 USAGE
   modforge bridge --from <ver> --to <ver> [--namespace named|source] <src-dir> [--json] [--out <file>]
-  modforge delta --from <ver> --to <ver> [--json]
+  modforge delta --from <ver> --to <ver> [--json] [--out <file>]
   modforge gradle-migrate <project-dir> [--apply]
   modforge mixin-check --target <ver> <src-dir>
   modforge versions
@@ -187,6 +188,7 @@ function resolveFinding(bridge: EraBridge, ns: SourceNamespace, f: JavaFinding) 
 async function cmdDelta(args: Args): Promise<void> {
   const from = str(args.flags, 'from') ?? fail('--from <version> is required', 2);
   const to = str(args.flags, 'to') ?? fail('--to <version> is required', 2);
+  const out = str(args.flags, 'out');
   const cache = new FetchCache();
   console.error(`modforge: fetching ${from} + ${to} client jars...`);
   const a = await cache.getClientJar(from);
@@ -194,14 +196,24 @@ async function cmdDelta(args: Args): Promise<void> {
   const { api: fromApi } = extractJarApi(a.data, `${from}-client`);
   const { api: toApi } = extractJarApi(b.data, `${to}-client`);
   const delta = computeDelta(fromApi, toApi);
+  if (out !== null) {
+    writeFileSync(out, renderDeltaMarkdown(delta, from, to));
+    console.error(`modforge: report written to ${out}`);
+    return;
+  }
   if (args.flags.get('json')) {
     console.log(JSON.stringify(delta, null, 1));
     return;
   }
   const s = summarizeDelta(delta);
   console.log(`API delta ${from} → ${to}`);
-  console.log(JSON.stringify(s, null, 2));
-  console.log(`\nFor the publishable markdown report: node scripts/delta-report.ts ${from} ${to}`);
+  console.log(`  classes: +${s.classesAdded} −${s.classesRemoved} (rename candidates ${s.classRenameCandidates})`);
+  console.log(`  methods: +${s.methodsAdded} −${s.methodsRemoved} ~${s.methodsDescChanged} signature-changed`);
+  console.log(`  fields:  +${s.fieldsAdded} −${s.fieldsRemoved} ~${s.fieldsDescChanged} type-changed`);
+  console.log(`  member rename candidates (methods + fields): ${s.memberRenameCandidates} — all CANDIDATE-grade`);
+  console.log('');
+  console.log(`publishable markdown report:  modforge delta --from ${from} --to ${to} --out delta.md`);
+  console.log(`full machine-readable delta:  modforge delta --from ${from} --to ${to} --json`);
 }
 
 async function cmdGradleMigrate(args: Args): Promise<void> {

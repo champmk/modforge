@@ -82,7 +82,7 @@ Add `--json` for a stable machine-readable schema, or `--out report.md` for mark
 | Command | What it does |
 |---|---|
 | `modforge bridge --from <v> --to <v> [--namespace named\|source] <src-dir> [--json] [--out report.md]` | Era migration report: resolves every Minecraft reference in your source tree to its target-version name, with audit chains. |
-| `modforge delta --from <v> --to <v> [--json]` | Exact API surface diff between any two game versions -- the "what breaks in 26.2" report, computable the minute a version ships. |
+| `modforge delta --from <v> --to <v> [--json] [--out delta.md]` | Exact API surface diff between any two game versions -- the "what breaks in 26.2" report, computable the minute a version ships (`--out` writes the publishable markdown). |
 | `modforge gradle-migrate <dir> [--apply]` | Mechanical build-script migration (loom plugin id, mappings block, dependency forms, Java 25); dry-run by default, EXACT-tier rewrites only with `--apply`. |
 | `modforge mixin-check --target <v> <src-dir>` | Verifies `@Mixin` targets and member references against the target version's jar. |
 | `modforge versions` | Shows the latest release/snapshot and the era boundary. |
