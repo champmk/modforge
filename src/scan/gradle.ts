@@ -470,7 +470,21 @@ function scanScript(text: string, kind: 'groovy' | 'kts'): GradleModel {
         const ls = lineStartOf(text, t.start);
         const nl = text.indexOf('\n', endTok.end);
         const le = nl === -1 ? text.length : nl + 1;
-        push('mappings-statement', ls, le, {});
+        const lineEnd = nl === -1 ? text.length : nl;
+        // Delete whole line(s) only when the statement owns them (optionally a
+        // trailing ';' / line comment). A line shared with another statement
+        // (`a "x"; mappings "y"`) must keep that statement intact — deleting
+        // the full line would be a silently-corrupting EXACT edit.
+        const ownsPrefix = text.slice(ls, t.start).trim() === '';
+        const ownsSuffix = /^[ \t]*;?[ \t]*(?:\/\/.*)?$/.test(text.slice(endTok.end, lineEnd));
+        if (ownsPrefix && ownsSuffix) {
+          push('mappings-statement', ls, le, {});
+        } else {
+          let e = endTok.end;
+          const tail = /^[ \t]*;/.exec(text.slice(e, lineEnd));
+          if (tail !== null) e += tail[0].length;
+          push('mappings-statement', t.start, e, {});
+        }
       } else {
         suspect(t.start, t.end, 'a `mappings` statement outside a dependencies block — shape not understood; left untouched.');
       }
@@ -507,6 +521,18 @@ function scanScript(text: string, kind: 'groovy' | 'kts'): GradleModel {
       const u = toks[k + 2]!;
       push('java-version', u.start, u.end, { shape: 'enum', value: u.v.slice('VERSION_'.length) });
       k += 2;
+      continue;
+    }
+    if (t.t === 'id' && t.v === 'JavaVersion' && toks[k + 1]?.v === '.' && toks[k + 2]?.v === 'toVersion' && toks[k + 3]?.v === '(') {
+      const u = toks[k + 4];
+      if (u !== undefined && (u.t === 'num' || u.t === 'str') && toks[k + 5]?.v === ')') {
+        if (u.t === 'num') push('java-version', u.start, u.end, { shape: 'compat', value: u.v });
+        else push('java-version', u.start + u.q, u.end - u.q, { shape: 'compat', value: u.v });
+        k += 5;
+      } else {
+        suspect(t.start, toks[k + 3]!.end, 'JavaVersion.toVersion(...) with a non-literal argument — left untouched; set Java 25 manually.');
+        k += 3;
+      }
       continue;
     }
     if (t.t === 'id' && t.v === 'JavaLanguageVersion' && toks[k + 1]?.v === '.' && toks[k + 2]?.v === 'of' && toks[k + 3]?.v === '(' && toks[k + 4]?.t === 'num') {
@@ -546,6 +572,11 @@ function scanScript(text: string, kind: 'groovy' | 'kts'): GradleModel {
           k += 2;
         }
         // `= JavaVersion.VERSION_x` is handled by the enum shape when the loop reaches it.
+      } else if (a !== undefined && (a.t === 'num' || a.t === 'str') && stmtStart(k) && !nlBetween(t, a)) {
+        // Groovy method-call form: `sourceCompatibility 21` / `targetCompatibility '21'`.
+        if (a.t === 'num') push('java-version', a.start, a.end, { shape: 'compat', value: a.v });
+        else push('java-version', a.start + a.q, a.end - a.q, { shape: 'compat', value: a.v });
+        k += 1;
       }
       continue;
     }
@@ -638,7 +669,9 @@ export function planAwCtHeaderEdits(path: string, text: string): { edits: Planne
   let firstLine = nl === -1 ? text : text.slice(0, nl);
   if (firstLine.endsWith('\r')) firstLine = firstLine.slice(0, -1);
 
-  const m = /^(accessWidener|classTweaker)([ \t]+)(v\d+)([ \t]+)([A-Za-z0-9_]+)[ \t]*$/.exec(firstLine);
+  // Trailing `#` comments are tolerated (AW v2 permits them); the rewrite span
+  // covers only the namespace word, so any comment text is preserved verbatim.
+  const m = /^(accessWidener|classTweaker)([ \t]+)(v\d+)([ \t]+)([A-Za-z0-9_]+)[ \t]*(?:#.*)?$/.exec(firstLine);
   if (!m) {
     manualReview.push({
       file: path,
