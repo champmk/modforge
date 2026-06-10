@@ -4,17 +4,19 @@
  * Implements the verified 1.21.x→26.x build migration rules from Fabric's
  * official porting docs (https://docs.fabricmc.net/develop/porting/):
  *
- *   - plugin id `fabric-loom` → `net.fabricmc.fabric-loom`; plugin version →
- *     live-resolution placeholder (the CLI fills it from meta APIs — SPEC §7,
- *     never hardcode toolchain versions)
+ *   - plugin id `fabric-loom` → `net.fabricmc.fabric-loom` (deterministic,
+ *     auto-applied); the loom plugin VERSION is project-specific and cannot be
+ *     mechanically derived, so it is left in place and flagged for manual
+ *     review with the value the user must supply — never auto-written
  *   - DELETE the `mappings` dependency statement/block (no mappings in 26.x)
  *   - dependency configs: modImplementation→implementation, modApi→api,
  *     modCompileOnly→compileOnly, modRuntimeOnly→runtimeOnly,
  *     modLocalRuntime→localRuntime (flagged REVIEW — verify), `include` stays
  *   - task references remapJar→jar
  *   - Java toolchain/source/target 21 → 25
- *   - gradle.properties: minecraft_version / loader_version / fabric_version →
- *     placeholders; yarn_mappings DELETED
+ *   - gradle.properties: minecraft_version / loader_version / fabric_version /
+ *     loom_version are project-specific — left in place and flagged for manual
+ *     review (never auto-written); yarn_mappings DELETED
  *   - accessWidener / classTweaker header namespace `named` → `official`
  *   - mixin config JSON: compatibilityLevel → JAVA_25, refmap key DELETED
  *
@@ -66,32 +68,20 @@ export interface GradleRule {
 /** The verified rule table, in stable presentation order. */
 export const GRADLE_RULES: readonly GradleRule[] = [
   { id: 'plugin-id', description: "Loom plugin id 'fabric-loom' → 'net.fabricmc.fabric-loom' (settings/build scripts).", docsUrl: PORTING_DOCS },
-  { id: 'plugin-version', description: 'Loom plugin version → placeholder resolved live by the CLI (toolchain versions are never hardcoded).', docsUrl: PORTING_DOCS },
+  { id: 'plugin-version', description: 'Loom plugin version is project-specific — flagged for manual review, never auto-written (set it to the fabric-loom release for your target Minecraft).', docsUrl: PORTING_DOCS },
   { id: 'mappings-delete', description: 'Delete the mappings dependency statement/block — 26.x has no mappings.', docsUrl: PORTING_DOCS },
   { id: 'dep-config-rename', description: 'modImplementation→implementation, modApi→api, modCompileOnly→compileOnly, modRuntimeOnly→runtimeOnly; include stays.', docsUrl: PORTING_DOCS },
   { id: 'dep-config-local-runtime', description: 'modLocalRuntime→localRuntime — flagged for verification (REVIEW).', docsUrl: PORTING_DOCS },
   { id: 'remapjar-to-jar', description: 'Task references remapJar → jar (no remapping step in 26.x).', docsUrl: PORTING_DOCS },
   { id: 'java-25', description: 'Java toolchain / sourceCompatibility / targetCompatibility / release 21 → 25.', docsUrl: PORTING_DOCS },
-  { id: 'props-minecraft-version', description: 'gradle.properties minecraft_version → live-resolution placeholder.', docsUrl: PORTING_DOCS },
+  { id: 'props-minecraft-version', description: 'gradle.properties minecraft_version is project-specific — flagged for manual review, never auto-written.', docsUrl: PORTING_DOCS },
   { id: 'props-yarn-mappings-delete', description: 'gradle.properties yarn_mappings line deleted (yarn ended at 1.21.11).', docsUrl: PORTING_DOCS },
-  { id: 'props-loader-version', description: 'gradle.properties loader_version → live-resolution placeholder.', docsUrl: PORTING_DOCS },
-  { id: 'props-fabric-api-version', description: 'gradle.properties fabric_version (fabric-api) → live-resolution placeholder.', docsUrl: PORTING_DOCS },
+  { id: 'props-loader-version', description: 'gradle.properties loader_version is project-specific — flagged for manual review, never auto-written.', docsUrl: PORTING_DOCS },
+  { id: 'props-fabric-api-version', description: 'gradle.properties fabric_version (fabric-api) is project-specific — flagged for manual review, never auto-written.', docsUrl: PORTING_DOCS },
   { id: 'aw-ct-header-official', description: "accessWidener/classTweaker header namespace 'named' → 'official' (verified for accessWidener v2).", docsUrl: PORTING_DOCS },
   { id: 'mixin-compat-level', description: 'Mixin config compatibilityLevel → JAVA_25.', docsUrl: PORTING_DOCS },
   { id: 'mixin-refmap-delete', description: 'Mixin config refmap key deleted (refmaps are a remapping-era artifact).', docsUrl: PORTING_DOCS },
 ];
-
-/**
- * Placeholder tokens emitted into migrated files. The CLI resolves these live
- * from meta APIs (SPEC §7) before writing; they are greppable and cannot be
- * confused with real Gradle syntax.
- */
-export const PLACEHOLDERS = {
-  loomVersion: '@MODFORGE_LOOM_VERSION@',
-  minecraftVersion: '@MODFORGE_MINECRAFT_VERSION@',
-  loaderVersion: '@MODFORGE_LOADER_VERSION@',
-  fabricApiVersion: '@MODFORGE_FABRIC_API_VERSION@',
-} as const;
 
 // ---------------------------------------------------------------------------
 // Text-span model
@@ -932,7 +922,14 @@ function editsForScriptModel(file: string, text: string, model: GradleModel, edi
         add(c.span, 'net.fabricmc.fabric-loom', 'plugin-id', 'EXACT');
         break;
       case 'plugin-version':
-        add(c.span, PLACEHOLDERS.loomVersion, 'plugin-version', 'EXACT');
+        // Project-specific: the right loom version cannot be mechanically derived,
+        // so it is never auto-written. Leave the value in place and flag it.
+        manual.push({
+          file,
+          span: { start: c.span.start, end: c.span.end, line: c.span.line },
+          text: c.text,
+          reason: `loom plugin version '${c.text}' is project-specific — set it by hand to the fabric-loom release matching your target Minecraft 26.x (see ${PORTING_DOCS}).`,
+        });
         break;
       case 'mappings-statement':
         add(c.span, '', 'mappings-delete', 'EXACT');
@@ -973,12 +970,12 @@ function editsForScriptModel(file: string, text: string, model: GradleModel, edi
 }
 
 function editsForPropertiesModel(file: string, text: string, model: GradleModel, edits: PlannedEdit[], manual: UnhandledConstruct[]): void {
-  const addValue = (c: GradleConstruct, after: string, rule: GradleRuleId): void => {
+  // A version we cannot resolve is not a mechanical rewrite: leave the value in
+  // place and flag it for manual review with the value the user must supply.
+  const flagValue = (c: GradleConstruct, reason: string): void => {
     const vs = c.valueSpan;
     if (!vs) return;
-    const before = text.slice(vs.start, vs.end);
-    if (before === after) return;
-    edits.push({ file, span: { start: vs.start, end: vs.end, line: vs.line }, before, after, rule, confidence: 'EXACT' });
+    manual.push({ file, span: { start: vs.start, end: vs.end, line: vs.line }, text: text.slice(vs.start, vs.end), reason });
   };
   for (const c of model.constructs) {
     if (c.kind !== 'property') continue;
@@ -995,17 +992,17 @@ function editsForPropertiesModel(file: string, text: string, model: GradleModel,
         });
         break;
       case 'minecraft_version':
-        addValue(c, PLACEHOLDERS.minecraftVersion, 'props-minecraft-version');
+        flagValue(c, `minecraft_version is project-specific — set it by hand to your target Minecraft 26.x version (see ${PORTING_DOCS}).`);
         break;
       case 'loader_version':
-        addValue(c, PLACEHOLDERS.loaderVersion, 'props-loader-version');
+        flagValue(c, `loader_version is project-specific — set it by hand to the Fabric Loader version for Minecraft 26.x (see ${PORTING_DOCS}).`);
         break;
       case 'fabric_version':
       case 'fabric_api_version':
-        addValue(c, PLACEHOLDERS.fabricApiVersion, 'props-fabric-api-version');
+        flagValue(c, `${key} is project-specific — set it by hand to the Fabric API version for Minecraft 26.x (see ${PORTING_DOCS}).`);
         break;
       case 'loom_version':
-        addValue(c, PLACEHOLDERS.loomVersion, 'plugin-version');
+        flagValue(c, `loom_version is project-specific — set it by hand to the fabric-loom version matching your target Minecraft 26.x (see ${PORTING_DOCS}).`);
         break;
       default:
         break; // unrelated property — untouched, not noise-reported

@@ -23,9 +23,14 @@ import { applyToDisk, type PatchOp } from '../src/patch/patch.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url));
 
-// A minimal fabric project: a loom plugin block + the three version properties
-// the migrator rewrites. Both files get rewritten on a first --apply, so a
-// backup of each is created — exactly the artifact a re-run must not corrupt.
+// A minimal fabric project. build.gradle is rewritten by the loom plugin-id
+// rename ('fabric-loom' → 'net.fabricmc.fabric-loom'); gradle.properties is
+// rewritten by the yarn_mappings deletion — both EXACT, auto-applied rules
+// that leave the file buildable. (Finding 19: project-specific version values
+// like minecraft_version/loader_version are NOT auto-written — they are left in
+// place for manual review, so they no longer drive these rewrites.) Each
+// first-run rewrite creates a backup — exactly the artifact a re-run must not
+// corrupt.
 const BUILD_GRADLE = "plugins {\n    id 'fabric-loom' version '1.9-SNAPSHOT'\n}\n";
 const GRADLE_PROPS = 'minecraft_version=1.21.11\nyarn_mappings=1.21.11+build.4\nloader_version=0.16.9\n';
 
