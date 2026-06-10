@@ -1,7 +1,6 @@
 /**
- * Generate the publishable "What breaks in <version>" API-delta report — the
- * recurring launch asset (SPEC §9): computed the day a game drop ships, before
- * any hand-written primer exists.
+ * Generate the publishable "What breaks in <version>" API-delta report —
+ * computable the day a game drop ships, before any hand-written primer exists.
  *
  * Usage: node scripts/delta-report.ts <fromVersion> <toVersion> [--out file.md]
  * Artifacts are fetched + sha1-verified + cached via the data layer; nothing is
@@ -46,7 +45,7 @@ function renderDeltaMarkdown(d: ApiDelta, fromV: string, toV: string): string {
 
   L(`# Minecraft ${fromV} → ${toV}: the complete API delta for mod developers`);
   L();
-  L(`> Generated deterministically by [ModForge](https://github.com/) from the actual game jars —`);
+  L(`> Generated deterministically by [ModForge](https://github.com/champmk/modforge) from the actual game jars —`);
   L(`> every entry below is a fact extracted from classfile metadata, not a curated summary.`);
   L(`> Rename *candidates* are structural inferences and are labeled with their evidence; verify before relying on them.`);
   L();
