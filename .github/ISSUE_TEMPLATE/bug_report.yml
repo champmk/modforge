@@ -1,0 +1,71 @@
+name: Bug report
+description: Something broke, crashed, or produced an obviously wrong report.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If ModForge marked a resolution **EXACT** and
+        the resolution is wrong, please use the "Wrong EXACT resolution (P0)"
+        template instead -- that bug class gets top priority.
+  - type: input
+    id: from-version
+    attributes:
+      label: Minecraft "from" version
+      placeholder: "1.21.11"
+    validations:
+      required: true
+  - type: input
+    id: to-version
+    attributes:
+      label: Minecraft "to" version
+      placeholder: "26.1.2"
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command run
+      description: The exact ModForge command, including all flags.
+      placeholder: "modforge bridge --from 1.21.11 --to 26.1.2 src/main/java"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected ModForge to do.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened (error message, crash, wrong output).
+    validations:
+      required: true
+  - type: textarea
+    id: report-excerpt
+    attributes:
+      label: Report excerpt
+      description: >-
+        Paste the relevant part of the report. Findings are labeled
+        EXACT, CANDIDATE, or UNRESOLVED -- include the labels and, if
+        present, the audit chain for the findings in question.
+        `--json` output is ideal.
+      render: text
+  - type: input
+    id: node-version
+    attributes:
+      label: Node version
+      description: Output of `node --version` (ModForge requires Node >= 24).
+      placeholder: "v24.1.0"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Windows 11 / Ubuntu 24.04 / macOS 15"
+    validations:
+      required: true

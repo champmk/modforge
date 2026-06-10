@@ -1,0 +1,63 @@
+name: Wrong EXACT resolution (P0)
+description: >-
+  ModForge marked something EXACT that is wrong. This is the
+  highest-severity bug class.
+labels: ["wrong-exact", "P0"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        EXACT means deterministic, jar-verified, and safe to auto-apply.
+        If an EXACT resolution is wrong, the core promise is broken and
+        this issue jumps the queue. Thank you for taking the time to
+        report it precisely.
+  - type: input
+    id: symbol
+    attributes:
+      label: Symbol
+      description: The class, method, or field that was resolved incorrectly.
+      placeholder: "net.minecraft.client.gui.DrawContext#drawText"
+    validations:
+      required: true
+  - type: input
+    id: from-version
+    attributes:
+      label: Minecraft "from" version
+      placeholder: "1.21.11"
+    validations:
+      required: true
+  - type: input
+    id: to-version
+    attributes:
+      label: Minecraft "to" version
+      placeholder: "26.1.2"
+    validations:
+      required: true
+  - type: textarea
+    id: what-modforge-said
+    attributes:
+      label: What ModForge said
+      description: >-
+        Paste the full resolution including the audit chain (the
+        yarn -> intermediary -> mojmap -> jar-verification steps shown
+        in the report or `--json` output).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: actually-correct
+    attributes:
+      label: What is actually correct
+      description: The correct target-version name/signature for this symbol.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >-
+        Link to or paste the proof: the relevant mapping file lines
+        (yarn tiny-v2, intermediary, ProGuard mojmap), the symbol as it
+        appears in the target-version jar, or a decompiled snippet.
+    validations:
+      required: true
