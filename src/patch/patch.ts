@@ -688,6 +688,49 @@ export function planJavaPatches(fileText: string, fileName: string, findings: Re
     }
   }
 
+  // --- pass 6: the old-name dangling invariant ---------------------------------
+  // An import rewrite whose SIMPLE NAME changes may only be applied if every
+  // standalone occurrence of the old simple name in the masked source is
+  // covered by an op in this plan. The scanner has known blind spots (static
+  // receivers, casts, return types, ...); rewriting the import while any
+  // occurrence stays behind would ship a non-compiling file under a success
+  // message — so any uncovered occurrence refuses the ENTIRE file.
+  const dangling = new Map<string, number[]>();
+  for (const op of finalOps) {
+    const f = opFinding.get(op.findingId)!;
+    if (f.kind !== 'import') continue;
+    const res = opResolution.get(op.findingId)!;
+    if (res.from.kind !== 'class' || res.to?.kind !== 'class') continue; // classEnds already verified these
+    const oldSimple = simpleNameOf(res.from.owner);
+    if (simpleNameOf(res.to.owner) === oldSimple || dangling.has(oldSimple)) continue;
+    const re = new RegExp(`(?<![\\w$])${escapeRe(oldSimple)}(?![\\w$])`, 'g');
+    const uncovered: number[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(masked)) !== null) {
+      const s = m.index;
+      const e = s + oldSimple.length;
+      if (!finalOps.some((o) => o.start <= s && o.end >= e)) uncovered.push(s);
+    }
+    if (uncovered.length > 0) dangling.set(oldSimple, uncovered);
+  }
+  if (dangling.size > 0) {
+    const lineOf = (off: number): number => {
+      let line = 1;
+      for (let k = 0; k < off; k++) if (fileText[k] === '\n') line++;
+      return line;
+    };
+    const detail = [...dangling.entries()]
+      .map(([name, offs]) => `'${name}' at line(s) ${[...new Set(offs.map(lineOf))].join(', ')}`)
+      .join('; ');
+    for (const op of finalOps) {
+      skip(
+        opFinding.get(op.findingId)!,
+        `import rewrite would leave ${detail} still referencing the old name (no rewrite is planned there) — whole file left for manual review (refusal over partial migration)`,
+      );
+    }
+    finalOps.length = 0;
+  }
+
   // --- THE LAW (SPEC §5): no op may exist without an EXACT resolution behind it.
   for (const op of finalOps) {
     const res = opResolution.get(op.findingId);
