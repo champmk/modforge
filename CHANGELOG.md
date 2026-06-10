@@ -5,6 +5,29 @@ All notable changes to ModForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `modforge bridge --apply`: writes EXACT rewrites to disk — span-verified,
+  all-or-nothing per file, originals backed up under `.modforge-backup/`,
+  iterates to a fixpoint (a rewrite held back by a name collision applies once
+  the colliding name is renamed away), and is idempotent. CANDIDATE and
+  UNRESOLVED findings are never touched.
+- `modforge delta --out <file>`: generates the publishable "what breaks in
+  <version>" markdown report directly from the CLI (previously repo-only).
+- Reversed `--from`/`--to` on `bridge` now suggests the corrected command.
+
+### Changed
+
+- Reports use paths relative to the scanned directory (no machine paths in
+  shareable reports; finding ids stable across machines), deduplicate audit
+  chains per unique symbol, and omit the applied-fix column when nothing was
+  applied.
+- `modforge delta` prints a readable summary by default (`--json` unchanged).
+- MCP: `modforge_resolve_symbol` now points agents at `modforge_bridge_report`
+  for batch resolution (up to 200 symbols per call).
+
 ## [0.1.1] - 2026-06-10
 
 ### Fixed

@@ -3,7 +3,7 @@
  * modforge — the CLI.
  *
  *   modforge bridge --from 1.21.11 --to 26.1.2 [--namespace named|source] <src-dir>
- *                   [--json] [--out report.md]
+ *                   [--json] [--out report.md] [--apply]
  *   modforge delta  --from 26.1.2 --to 26.2-pre-5 [--json] [--out delta.md]
  *   modforge gradle-migrate <project-dir> [--apply]
  *   modforge mixin-check --target 26.1.2 <src-dir>
@@ -27,6 +27,9 @@ import { buildRenameTable, surfaceFromMojmap } from '../bridge/renames.ts';
 import { computeDelta } from '../delta/delta.ts';
 import { renderDeltaMarkdown } from '../report/delta-md.ts';
 import { scanTree, type JavaFinding } from '../scan/java.ts';
+import { planJavaPatches, applyToDisk, type PatchOp } from '../patch/patch.ts';
+import { adaptForPatching, type PatchInput } from '../patch/wire.ts';
+import type { AppliedFix } from '../report/report.ts';
 import {
   makeFinding,
   makeReport,
@@ -43,7 +46,7 @@ import { findMixinConfigs, scanMixinSource, collectTargetChecks, type MixinClass
 const USAGE = `modforge — deterministic cross-version migration engine for Minecraft mods
 
 USAGE
-  modforge bridge --from <ver> --to <ver> [--namespace named|source] <src-dir> [--json] [--out <file>]
+  modforge bridge --from <ver> --to <ver> [--namespace named|source] <src-dir> [--json] [--out <file>] [--apply]
   modforge delta --from <ver> --to <ver> [--json] [--out <file>]
   modforge gradle-migrate <project-dir> [--apply]
   modforge mixin-check --target <ver> <src-dir>
@@ -147,20 +150,85 @@ async function cmdBridge(args: Args): Promise<void> {
     throw e;
   }
 
-  const scan = scanTree(dir);
-  console.error(`modforge: scanned ${scan.files.length} files, ${scan.findings.length} references (${scan.errors.length} file errors)`);
-  for (const e of scan.errors) console.error(`modforge:   scan error: ${e.file}: ${e.error}`);
+  /** One scan+resolve pass over the tree (re-run between apply passes — the engine stays cached). */
+  const runPass = (quiet: boolean) => {
+    const scan = scanTree(dir);
+    if (!quiet) {
+      console.error(`modforge: scanned ${scan.files.length} files, ${scan.findings.length} references (${scan.errors.length} file errors)`);
+      for (const e of scan.errors) console.error(`modforge:   scan error: ${e.file}: ${e.error}`);
+    }
+    const passFindings: Finding[] = [];
+    // Per-file inputs for --apply: relative path → { absolute path, patch items }.
+    const patchByFile = new Map<string, { absFile: string; items: PatchInput[] }>();
+    for (const f of scan.findings) {
+      if (!f.className || !(f.className.startsWith('net/minecraft') || f.className.startsWith('com/mojang'))) continue;
+      const resolution = resolveFinding(bridge, ns, f);
+      if (!resolution) continue;
+      // Paths relative to the scanned dir: keeps usernames/machine paths out of
+      // shareable reports and makes finding ids stable across machines (CI baselines).
+      const relFile = relative(dir, f.file) || f.file;
+      const finding = makeFinding({ file: relFile, line: f.line, col: f.col, surface: f.kind }, resolution);
+      passFindings.push(finding);
+      const entry = patchByFile.get(finding.source.file!) ?? { absFile: f.file, items: [] };
+      entry.items.push({ finding: f, resolution, id: finding.id });
+      patchByFile.set(finding.source.file!, entry);
+    }
+    return { passFindings, patchByFile };
+  };
 
-  const findings: Finding[] = [];
-  for (const f of scan.findings) {
-    if (!f.className || !(f.className.startsWith('net/minecraft') || f.className.startsWith('com/mojang'))) continue;
-    const resolution = resolveFinding(bridge, ns, f);
-    if (!resolution) continue;
-    // Paths relative to the scanned dir: keeps usernames/machine paths out of
-    // shareable reports and makes finding ids stable across machines (CI baselines).
-    const relFile = relative(dir, f.file) || f.file;
-    findings.push(makeFinding({ file: relFile, line: f.line, col: f.col, surface: f.kind }, resolution));
+  // The report reflects the tree as FOUND (pass 1); apply passes annotate it.
+  const first = runPass(false);
+  const findings = first.passFindings;
+
+  if (args.flags.get('apply')) {
+    // Iterate to the fixpoint: a pass may hold back an edit whose new simple
+    // name would collide with a binding that the SAME pass renames away
+    // (conservative per-pass hazard checks). Each pass re-scans the tree and
+    // re-verifies against the current text, so later passes are independently
+    // proven. Idempotence bounds this — a pass that applies nothing ends it.
+    const MAX_PASSES = 5;
+    let totalApplied = 0;
+    let skippedCount = 0;
+    const writtenFiles = new Set<string>();
+    const fixById = new Map<string, AppliedFix>();
+    for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      const { patchByFile } = pass === 1 ? first : runPass(true);
+      const allOps: PatchOp[] = [];
+      skippedCount = 0;
+      for (const [relFile, { absFile, items }] of patchByFile) {
+        const text = readFileSync(absFile, 'utf8');
+        const plan = planJavaPatches(text, relFile, adaptForPatching(text, relFile, items));
+        allOps.push(...plan.ops);
+        skippedCount += plan.skipped.length;
+      }
+      const outcomes = applyToDisk(allOps, { root: dir });
+      let applied = 0;
+      for (const o of outcomes) {
+        if (o.written) writtenFiles.add(o.file);
+        for (const op of o.applied) {
+          applied++;
+          // Finding ids are content-derived from (symbol, file, line, col),
+          // so a held-back edit re-applied in a later pass annotates the same
+          // pass-1 report finding.
+          fixById.set(op.findingId, { file: o.file, before: op.before, after: op.after });
+        }
+        for (const r of o.refused) console.error(`modforge:   refused ${r.op.file}: ${r.reason}`);
+      }
+      totalApplied += applied;
+      if (applied === 0) break;
+    }
+    // Light up the report's applied-fix column for exactly what was rewritten.
+    for (const f of findings) {
+      const fix = fixById.get(f.id);
+      if (fix) f.appliedFix = fix;
+    }
+    console.error(
+      `modforge: applied ${totalApplied} EXACT rewrite(s) across ${writtenFiles.size} file(s); ` +
+        `${skippedCount} finding(s) left for review (CANDIDATE/UNRESOLVED or not provably patchable). ` +
+        `Originals backed up under ${join(dir, '.modforge-backup')}`,
+    );
   }
+
   const report = makeReport(
     // Provenance relative to the working dir when possible — shareable reports
     // should not carry the machine's user paths.

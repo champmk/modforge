@@ -249,8 +249,9 @@ const TOOLS: ToolDef[] = [
       'target game version, with the full audit chain of every mapping hop. Use this instead of ' +
       `guessing what a symbol is called after a version change. ${TAXONOMY_NOTE} ` +
       'fromVersion must be old-era (<= 1.21.11 — the bridge consumes its published mappings); for ' +
-      '26.x -> 26.x questions use modforge_api_delta instead. First call per version pair downloads ' +
-      'and parses official mappings/jars (~10-30 s); cached afterwards.',
+      '26.x -> 26.x questions use modforge_api_delta instead. Resolving MANY symbols (porting a whole ' +
+      'file or mod)? Use modforge_bridge_report — it batch-resolves up to 200 symbols per call. ' +
+      'First call per version pair downloads and parses official mappings/jars (~10-30 s); cached afterwards.',
     inputSchema: {
       type: 'object',
       properties: { ...VERSION_PROPS, ...SYMBOL_PROPS },

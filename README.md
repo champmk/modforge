@@ -81,7 +81,7 @@ Add `--json` for a stable machine-readable schema, or `--out report.md` for mark
 
 | Command | What it does |
 |---|---|
-| `modforge bridge --from <v> --to <v> [--namespace named\|source] <src-dir> [--json] [--out report.md]` | Era migration report: resolves every Minecraft reference in your source tree to its target-version name, with audit chains. |
+| `modforge bridge --from <v> --to <v> [--namespace named\|source] <src-dir> [--json] [--out report.md] [--apply]` | Era migration report: resolves every Minecraft reference in your source tree to its target-version name, with audit chains. `--apply` writes the EXACT rewrites to disk (originals backed up under `.modforge-backup/`); CANDIDATE and UNRESOLVED are never touched. |
 | `modforge delta --from <v> --to <v> [--json] [--out delta.md]` | Exact API surface diff between any two game versions -- the "what breaks in 26.2" report, computable the minute a version ships (`--out` writes the publishable markdown). |
 | `modforge gradle-migrate <dir> [--apply]` | Mechanical build-script migration (loom plugin id, mappings block, dependency forms, Java 25); dry-run by default, EXACT-tier rewrites only with `--apply`. |
 | `modforge mixin-check --target <v> <src-dir>` | Verifies `@Mixin` targets and member references against the target version's jar. |
@@ -166,7 +166,6 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/SPEC.md](do
 
 - Instruction-level mixin `@At` verification (a signature can match while the targeted
   instruction is gone)
-- `--apply` auto-patching for EXACT bridge findings
 - NeoForge convenience flow (mojmap-input mods skip the yarn hops)
 - Expanded validation corpus across more real ports
 
