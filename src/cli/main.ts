@@ -303,7 +303,7 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) {
-        if (!['build', '.gradle', '.git', 'node_modules', 'run'].includes(e.name)) walk(p);
+        if (!['build', '.gradle', '.git', 'node_modules', 'run', '.modforge-backup'].includes(e.name)) walk(p);
       } else if (wanted.has(e.name) || e.name.endsWith('.mixins.json') || e.name.endsWith('.accesswidener')) {
         files.push({ path: p.replace(/\\/g, '/'), text: readFileSync(p, 'utf8') });
       }
@@ -393,7 +393,7 @@ function collectMixinClassScans(dir: string): MixinClassScan[] {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) {
-        if (!['build', '.gradle', '.git', 'node_modules', 'run', 'out'].includes(e.name)) walk(p);
+        if (!['build', '.gradle', '.git', 'node_modules', 'run', 'out', '.modforge-backup'].includes(e.name)) walk(p);
       } else if (e.name.endsWith('.java')) {
         scans.push(...scanMixinSource(readFileSync(p, 'utf8'), p.replaceAll('\\', '/')));
       }

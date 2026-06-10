@@ -822,7 +822,7 @@ export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): File
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`applyToDisk: '${file}' resolves to '${abs}', outside root '${root}' — refusing to patch anything (set opts.root to a directory containing every target)`);
     }
-    if (rel === BACKUP_DIR || normPath(rel).startsWith(`${BACKUP_DIR}/`)) {
+    if (normPath(rel).split('/').includes(BACKUP_DIR)) {
       throw new Error(`applyToDisk: '${file}' lies inside the backup directory — refusing to patch anything`);
     }
     resolved.set(file, { abs, rel });
