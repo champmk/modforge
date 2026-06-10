@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bridge --apply` refuses a file whole when rewriting an import would leave
+  any occurrence of the old class name behind (static-access receivers, casts,
+  and return types are known scanner blind spots) — the refusal names the
+  dangling lines. Previously such files were written non-compiling while the
+  run reported success.
+- Member accesses through lambda parameters and `var` locals are never
+  attributed to an identically-named typed declaration elsewhere in the file;
+  they now report an unresolved receiver and are never auto-rewritten.
+- `mixin-check` no longer issues false "break on this version" verdicts:
+  owners outside `net.minecraft`/`com.mojang` (JDK, libraries, the mod's own
+  classes) report as "not verifiable" INFO instead of ABSENT, and members
+  inherited from supertypes are found via a deterministic hierarchy walk over
+  the target jar. On a real 632-file corpus this turned 72 ABSENT verdicts
+  (majority provably false) into 4, all plausibly genuine.
+- Re-running `gradle-migrate --apply` no longer walks into `.modforge-backup/`
+  (backups stay pristine originals; re-run counts are truthful), and the
+  patcher refuses to write to any path inside a backup directory at any depth.
+- Files that are not valid UTF-8 are refused per-file with the offset of the
+  first invalid byte instead of being silently rewritten with U+FFFD
+  replacement characters; `gradle-migrate` backups are raw byte copies.
 - `gradle-migrate --apply` now backs originals up under `.modforge-backup/`
   before writing — the same safety contract as `bridge --apply` (previously it
   wrote build files with no backup).
