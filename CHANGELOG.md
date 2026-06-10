@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installing from a git clone or `github:` spec now works: a `prepare` script
+  builds `dist/` on install (previously the bins pointed at a `dist/` that was
+  never built, and the install succeeded silently).
+- `gradle-migrate --apply` no longer writes `@MODFORGE_...@` placeholder tokens
+  into build files (which made the project unbuildable). Project-specific
+  version values are left in place and flagged for manual review with an
+  instruction naming exactly what to set.
+- The MCP server tolerates a UTF-8 BOM on its first stdin message, validates
+  `memberInfo` before downloading the target jar, and its version errors only
+  suggest parameters that exist.
+- Color output: ANSI escapes are emitted only when stdout is a TTY and
+  `NO_COLOR` is unset (`--no-color` still forces plain text), so piped output
+  and CI logs stay clean.
 - `bridge --apply` refuses a file whole when rewriting an import would leave
   any occurrence of the old class name behind (static-access receivers, casts,
   and return types are known scanner blind spots) — the refusal names the
@@ -46,6 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- MCP responses are budgeted for agent context windows: `modforge_api_delta`
+  caps its lists by default and reports `truncated`/`returned` counts (raise
+  with `maxItemsPerList`); `modforge_bridge_report` omits per-finding audit
+  chains by default (request them with `includeChains: true`). Tool
+  descriptions warn about cold-start mapping downloads.
 - Reports use paths relative to the scanned directory (no machine paths in
   shareable reports; finding ids stable across machines), deduplicate audit
   chains per unique symbol, and omit the applied-fix column when nothing was
