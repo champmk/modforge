@@ -19,7 +19,9 @@ stripping. If `npm test` passes, you are ready to work.
 
 ## Code style
 
-- Strict TypeScript. `npx -p typescript tsc --noEmit` must be clean.
+- Strict TypeScript. Typechecking needs the compiler and Node's types
+  (`npm install --no-save typescript @types/node`, then `npx tsc --noEmit`
+  must be clean). This is the one tooling download; it never ships.
 - ESM only, with explicit `.ts` extensions in imports
   (`import { x } from "./y.ts"`).
 - **No runtime dependencies. This is a hard rule, not a preference.**

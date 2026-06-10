@@ -17,9 +17,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      # No npm install step: ModForge has zero runtime dependencies and zero
-      # dev dependencies. Node 24 runs the TypeScript sources directly.
+      # No install needed to run or test: ModForge has zero runtime
+      # dependencies and Node 24 runs the TypeScript sources directly.
       - name: Run tests
         run: npm test
+      # Typechecking alone needs the compiler and Node's type definitions.
+      - name: Fetch typecheck tooling
+        run: npm install --no-save --no-package-lock typescript @types/node
       - name: Typecheck
-        run: npx --yes -p typescript tsc --noEmit
+        run: npx tsc --noEmit
