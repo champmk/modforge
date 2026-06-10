@@ -17,7 +17,7 @@
  * sha1-verified, and cached under ~/.modforge/cache — nothing is redistributed.
  */
 import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { FetchCache, ArtifactUnavailableError, FetchError } from '../mappings/fetch.ts';
 import { parseTinyV2 } from '../mappings/tiny.ts';
 import { parseProguard } from '../mappings/proguard.ts';
@@ -144,10 +144,15 @@ async function cmdBridge(args: Args): Promise<void> {
     if (!f.className || !(f.className.startsWith('net/minecraft') || f.className.startsWith('com/mojang'))) continue;
     const resolution = resolveFinding(bridge, ns, f);
     if (!resolution) continue;
-    findings.push(makeFinding({ file: f.file, line: f.line, col: f.col, surface: f.kind }, resolution));
+    // Paths relative to the scanned dir: keeps usernames/machine paths out of
+    // shareable reports and makes finding ids stable across machines (CI baselines).
+    const relFile = relative(dir, f.file) || f.file;
+    findings.push(makeFinding({ file: relFile, line: f.line, col: f.col, surface: f.kind }, resolution));
   }
   const report = makeReport(
-    { tool: 'modforge', version: '0.1.1', fromVersion: from, toVersion: to, namespace: ns, generatedFor: dir },
+    // Provenance relative to the working dir when possible — shareable reports
+    // should not carry the machine's user paths.
+    { tool: 'modforge', version: '0.1.1', fromVersion: from, toVersion: to, namespace: ns, generatedFor: relative(process.cwd(), dir) || dir },
     findings,
   );
 

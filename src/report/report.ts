@@ -621,13 +621,14 @@ const mdText = (s: string): string => s.replace(/\|/g, '\\|').replace(/\r\n|\r|\
 /** Code-span a value for a table cell (backticks inside content degraded to quotes). */
 const mdCode = (s: string): string => (s === '' ? '' : '`' + mdText(s.replace(/`/g, "'")) + '`');
 
-function mdFindingRow(f: Finding, conf: Confidence): string {
+function mdFindingRow(f: Finding, conf: Confidence, withFixColumn: boolean): string {
   const r = f.resolution;
   const loc = mdText(locText(f.source).replace(/^L/, ''));
   const surface = mdCode(f.source.surface ?? '');
   const from = mdCode(`${r.from.kind} ${formatSymbol(r.from)}`);
   if (conf === 'EXACT') {
     const to = r.to !== undefined ? mdCode(formatSymbol(r.to)) : '*missing — malformed EXACT resolution*';
+    if (!withFixColumn) return `| ${loc} | ${surface} | ${from} | ${to} |`;
     const fix =
       f.appliedFix !== undefined
         ? `${mdCode(f.appliedFix.file)}: ${mdCode(f.appliedFix.before)} → ${mdCode(f.appliedFix.after)}`
@@ -643,11 +644,18 @@ function mdFindingRow(f: Finding, conf: Confidence): string {
   return `| ${loc} | ${surface} | ${from} | ${mdText(r.reason)} |`;
 }
 
-const MD_TABLE_HEAD: Record<Confidence, string[]> = {
-  EXACT: ['| line | surface | from | to | applied fix |', '|---|---|---|---|---|'],
-  CANDIDATE: ['| line | surface | from | candidates (ranked, with evidence) |', '|---|---|---|---|'],
-  UNRESOLVED: ['| line | surface | from | reason |', '|---|---|---|---|'],
-};
+/** EXACT gets the 'applied fix' column only when at least one fix was applied. */
+function mdTableHead(conf: Confidence, withFixColumn: boolean): string[] {
+  if (conf === 'EXACT') {
+    return withFixColumn
+      ? ['| line | surface | from | to | applied fix |', '|---|---|---|---|---|']
+      : ['| line | surface | from | to |', '|---|---|---|---|'];
+  }
+  if (conf === 'CANDIDATE') {
+    return ['| line | surface | from | candidates (ranked, with evidence) |', '|---|---|---|---|'];
+  }
+  return ['| line | surface | from | reason |', '|---|---|---|---|'];
+}
 
 /**
  * Render the report as GitHub-flavored Markdown: meta header, honesty note,
@@ -685,6 +693,7 @@ export function renderMarkdown(report: MigrationReport): string {
   );
 
   const sorted = sortFindings(report.findings);
+  const hasFixes = sorted.some((f) => f.appliedFix !== undefined);
   for (const conf of CONFIDENCE_ORDER) {
     const group = sorted.filter((f) => f.resolution.confidence === conf);
     lines.push('');
@@ -700,14 +709,30 @@ export function renderMarkdown(report: MigrationReport): string {
       lines.push('');
       lines.push(`### ${file === '' ? NO_FILE : mdCode(file)}`);
       lines.push('');
-      for (const head of MD_TABLE_HEAD[conf]) lines.push(head);
-      for (const f of items) lines.push(mdFindingRow(f, conf));
+      for (const head of mdTableHead(conf, hasFixes)) lines.push(head);
+      for (const f of items) lines.push(mdFindingRow(f, conf, hasFixes));
       lines.push('');
       lines.push('<details>');
-      lines.push(`<summary>Audit chains (${items.length} finding${items.length === 1 ? '' : 's'})</summary>`);
-      lines.push('');
+      // One chain per unique resolution — the same symbol resolved identically
+      // at N sites proves itself once. Insertion order follows the canonical
+      // finding order, so output stays deterministic.
+      const unique = new Map<string, { f: Finding; count: number }>();
       for (const f of items) {
-        lines.push(`- \`${f.id}\` ${mdCode(formatSymbol(f.resolution.from))} — ${mdText(f.resolution.reason)}`);
+        const k =
+          symbolKey(f.resolution.from) + ' ' + f.resolution.reason + ' ' + f.resolution.chain.join(' ');
+        const seen = unique.get(k);
+        if (seen) seen.count++;
+        else unique.set(k, { f, count: 1 });
+      }
+      const label =
+        unique.size === items.length
+          ? `Audit chains (${items.length} finding${items.length === 1 ? '' : 's'})`
+          : `Audit chains (${unique.size} unique symbol${unique.size === 1 ? '' : 's'} across ${items.length} findings)`;
+      lines.push(`<summary>${label}</summary>`);
+      lines.push('');
+      for (const { f, count } of unique.values()) {
+        const times = count === 1 ? '' : ` *(×${count})*`;
+        lines.push(`- ${mdCode(formatSymbol(f.resolution.from))}${times} — ${mdText(f.resolution.reason)}`);
         if (f.resolution.chain.length === 0) lines.push('  - (no chain recorded)');
         else for (let i = 0; i < f.resolution.chain.length; i++) lines.push(`  ${i + 1}. ${mdText(f.resolution.chain[i]!)}`);
       }
