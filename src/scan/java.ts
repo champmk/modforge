@@ -1093,6 +1093,15 @@ class FileScanner {
         this.emitMemberOnChain(receiver, t.off, memberName, isCall ? 'method' : 'field', argCount, undefined);
         return isCall ? end + 1 : end;
       }
+      // ALL_CAPS final segment = a constant field by Java convention, not a
+      // nested class (RenderPipelines.GUI_TEXTURED). Nested classes are CamelCase.
+      if (/^[A-Z][A-Z0-9_]*$/.test(memberName) && memberName.length > 1 && !/[a-z]/.test(memberName)) {
+        this.emitMemberOnChain(
+          receiver, t.off, memberName, isCall ? 'method' : 'field', argCount,
+          'ALL_CAPS segment treated as a constant field (Java naming convention)',
+        );
+        return isCall ? end + 1 : end;
+      }
       // Whole chain looks like a type (FQN reference / nested class use).
       this.emitTypeRef('fqn-reference', chain, t.off);
       return end;

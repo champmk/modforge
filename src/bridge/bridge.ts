@@ -223,7 +223,9 @@ export class EraBridge {
     oldOwner: string,
     oldName: string,
     oldDesc: string | null,
+    opts: { argCount?: number } = {},
   ): Resolution {
+    const argCount = opts.argCount ?? null;
     const from: SymbolRef = { kind, owner: oldOwner, name: oldName };
     if (oldDesc) from.desc = oldDesc;
     const chain: string[] = [];
@@ -247,10 +249,10 @@ export class EraBridge {
           chain,
         };
       }
-      const hop = this.namedMemberToObf(oldOwner, yc, ic, kind, oldName, oldDesc, chain);
+      const hop = this.namedMemberToObf(oldOwner, yc, ic, kind, oldName, oldDesc, chain, argCount);
       if ('unresolved' in hop) {
         if (!hop.notFound) return { from, confidence: 'UNRESOLVED', reason: hop.unresolved, chain };
-        const inh = this.tryInherited(ns, from, chain, hop.unresolved, pg.cls.obfBinary, kind, oldName, oldDesc);
+        const inh = this.tryInherited(ns, from, chain, hop.unresolved, pg.cls.obfBinary, kind, oldName, oldDesc, argCount);
         if ('resolution' in inh) return inh.resolution;
         pgMember = inh.pgMember;
         inheritedFrom = inh.inheritedFrom;
@@ -386,6 +388,7 @@ export class EraBridge {
     namedName: string,
     namedDesc: string | null,
     chain: string[],
+    argCount: number | null = null,
   ): MemberHop {
     const list = kind === 'method' ? yc.methods : yc.fields;
     // yarn member descs are in the INTERMEDIARY namespace (first ns of the yarn file).
@@ -428,6 +431,21 @@ export class EraBridge {
     }
 
     if (!pick && matches.length === 1) pick = matches[0]!;
+    if (!pick && matches.length > 1 && namedDesc === null && argCount !== null && kind === 'method') {
+      // Caller supplied a lexically-counted callsite arity (no descriptor available
+      // from source). Unique arity match = deterministic; ties stay UNRESOLVED.
+      const byArity = matches.filter((m) => countDescriptorArgs(m.desc) === argCount);
+      if (byArity.length === 1) {
+        pick = byArity[0]!;
+        chain.push(`yarn: overload disambiguated by callsite arity (${argCount} args)`);
+      } else if (byArity.length === 0) {
+        return {
+          unresolved:
+            `yarn has ${matches.length} overloads of ${namedName} on ${displayOwner}, none with ${argCount} ` +
+            `parameters (callsite arity) — varargs or mis-counted arity; not guessing.`,
+        };
+      }
+    }
     if (!pick && matches.length > 1 && namedDesc !== null) {
       // Last-resort disambiguation when translation could not complete: arity only.
       const wanted = countDescriptorArgs(namedDesc);
@@ -470,6 +488,7 @@ export class EraBridge {
     kind: 'method' | 'field',
     oldName: string,
     oldDesc: string | null,
+    argCount: number | null = null,
   ): { pgMember: PgMember; inheritedFrom: string } | { resolution: Resolution } {
     if (!this.oldHierarchy) {
       return {
@@ -486,7 +505,7 @@ export class EraBridge {
     }
     const inh =
       ns === 'named'
-        ? this.findInheritedNamed(obfOwner, kind, oldName, oldDesc)
+        ? this.findInheritedNamed(obfOwner, kind, oldName, oldDesc, argCount)
         : this.findInheritedSource(obfOwner, kind, oldName, oldDesc);
     if ('pgMember' in inh) {
       chain.push(
@@ -550,6 +569,7 @@ export class EraBridge {
     kind: 'method' | 'field',
     namedName: string,
     namedDesc: string | null,
+    argCount: number | null = null,
   ): InheritedLookup {
     let walked = 0;
     const nearMisses: string[] = [];
@@ -561,7 +581,7 @@ export class EraBridge {
       if (!ic || !iName || !yc) continue; // supertype outside MC mappings (bundled lib) — not a bridgeable declarer
       const declaredOn = yc.names[1] ?? iName;
       const scratch: string[] = []; // merged into the audit chain only on a hit
-      const hop = this.namedMemberToObf(declaredOn, yc, ic, kind, namedName, namedDesc, scratch);
+      const hop = this.namedMemberToObf(declaredOn, yc, ic, kind, namedName, namedDesc, scratch, argCount);
       if ('unresolved' in hop) {
         if (hop.notFound) continue;
         if (hop.descMismatch) {
