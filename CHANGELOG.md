@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   <version>" markdown report directly from the CLI (previously repo-only).
 - Reversed `--from`/`--to` on `bridge` now suggests the corrected command.
 
+### Fixed
+
+- `gradle-migrate --apply` now backs originals up under `.modforge-backup/`
+  before writing — the same safety contract as `bridge --apply` (previously it
+  wrote build files with no backup).
+
 ### Changed
 
 - Reports use paths relative to the scanned directory (no machine paths in

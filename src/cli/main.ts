@@ -16,8 +16,8 @@
  * All artifacts (manifests, jars, mappings) are fetched from official sources,
  * sha1-verified, and cached under ~/.modforge/cache — nothing is redistributed.
  */
-import { readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
+import { join, relative, dirname } from 'node:path';
 import { FetchCache, ArtifactUnavailableError, FetchError } from '../mappings/fetch.ts';
 import { parseTinyV2 } from '../mappings/tiny.ts';
 import { parseProguard } from '../mappings/proguard.ts';
@@ -319,11 +319,22 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
     let written = 0;
     for (const f of applyGradleMigration(plan)) {
       if (originals.get(f.path) !== f.text) {
+        // Same safety contract as bridge --apply: original backed up under
+        // .modforge-backup/ before writing (first-run copy preserved).
+        const rel = relative(dir, f.path) || f.path;
+        const backupPath = join(dir, '.modforge-backup', rel);
+        if (!existsSync(backupPath)) {
+          mkdirSync(dirname(backupPath), { recursive: true });
+          writeFileSync(backupPath, originals.get(f.path)!);
+        }
         writeFileSync(f.path, f.text);
         written++;
       }
     }
-    console.error(`modforge: ${written} files rewritten (EXACT-tier rules only). Review the manual-review list above.`);
+    console.error(
+      `modforge: ${written} files rewritten (EXACT-tier rules only; originals backed up under ${join(dir, '.modforge-backup')}). ` +
+        'Review the manual-review list above.',
+    );
   } else {
     console.error('modforge: dry run — pass --apply to write the EXACT-tier rewrites.');
   }
