@@ -1,0 +1,9 @@
+# local research artifacts (Mojang-licensed downloads, corpus clones) — never publish
+_research/
+
+# private working notes
+_internal/
+
+node_modules/
+.modforge-backup/
+*.log
