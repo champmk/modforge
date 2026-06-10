@@ -31,6 +31,7 @@ import { planJavaPatches, applyToDisk, type PatchOp } from '../patch/patch.ts';
 import { adaptForPatching, type PatchInput } from '../patch/wire.ts';
 import type { AppliedFix } from '../report/report.ts';
 import {
+  colorEnabled,
   makeFinding,
   makeReport,
   renderJson,
@@ -245,7 +246,10 @@ async function cmdBridge(args: Args): Promise<void> {
     writeFileSync(out, renderMarkdown(report));
     console.error(`modforge: report written to ${out}`);
   } else {
-    console.log(renderTerminal(report, { color: !args.flags.get('no-color') }));
+    // Color is opt-in: only an interactive stdout with NO_COLOR unset/empty;
+    // --no-color forces it off (so piped/redirected output and CI logs stay clean).
+    const color = colorEnabled(args.flags.get('no-color') === true, process.env, process.stdout.isTTY === true);
+    console.log(renderTerminal(report, { color }));
   }
 }
 

@@ -507,6 +507,26 @@ export interface TerminalRenderOptions {
 }
 
 /**
+ * Decide whether the terminal renderer should emit ANSI color. Pure so the CLI
+ * can pass real process state and tests can hand-derive every case.
+ *
+ * Default color = (stdout is a TTY) AND (NO_COLOR is unset or empty). The
+ * `--no-color` flag forces it off regardless. Honors the NO_COLOR convention
+ * (https://no-color.org): ANY non-empty value disables color; an empty string
+ * does NOT (presence alone is not enough — the value must be non-empty).
+ */
+export function colorEnabled(
+  noColorFlag: boolean,
+  env: { NO_COLOR?: string | undefined },
+  isTTY: boolean,
+): boolean {
+  if (noColorFlag) return false;
+  const noColor = env.NO_COLOR;
+  if (noColor !== undefined && noColor !== '') return false;
+  return isTTY;
+}
+
+/**
  * Render the report for a terminal: summary header with the honesty note, then
  * findings grouped by confidence (EXACT → CANDIDATE → UNRESOLVED) with per-file
  * sections, each finding carrying its evidence/reason and full audit chain,
