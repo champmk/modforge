@@ -305,7 +305,8 @@ export class ModForgeEngine {
    * Throws EngineInputError when `memberInfo` is outside the MemberInfo grammar.
    */
   async checkMixinTarget(targetVersion: string, mixinTargetClass: string, memberInfo?: string): Promise<MixinTargetReport> {
-    const api = await this.getJarApi(targetVersion);
+    // Validate the cheap, pure inputs BEFORE the ~25MB jar download/parse, so
+    // malformed arguments fail fast instead of paying for an artifact first.
     const cls = normalizeBinary(mixinTargetClass);
     let parsed: MemberInfoParse | undefined;
     if (memberInfo !== undefined) {
@@ -317,6 +318,7 @@ export class ModForgeEngine {
         );
       }
     }
+    const api = await this.getJarApi(targetVersion);
     const resolution = groundMixinRef(api, cls, parsed);
     const report: MixinTargetReport = { targetVersion, jarId: api.id, resolution };
     if (parsed !== undefined) report.memberInfo = parsed;

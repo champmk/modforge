@@ -32,8 +32,10 @@
  */
 import { argv, exit, stdin, stdout, stderr } from 'node:process';
 import process from 'node:process';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { EngineInputError, ModForgeEngine } from './engine.ts';
-import type { SymbolQuery } from './engine.ts';
+import type { BridgeReport, SymbolQuery } from './engine.ts';
 import type { SourceNamespace } from '../bridge/bridge.ts';
 import type { ApiDelta, MemberChange, RenameCandidate } from '../delta/delta.ts';
 import { ArtifactUnavailableError, FetchError } from '../mappings/fetch.ts';
@@ -46,8 +48,12 @@ const SERVER_VERSION = '0.1.1';
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
 const LATEST_PROTOCOL = SUPPORTED_PROTOCOLS[0];
 
-/** Per-list entry cap on delta output (token discipline; totals are always complete). */
-const DELTA_LIST_CAP = 100;
+/**
+ * Default per-list entry cap on delta output (token discipline; totals are
+ * always complete). Small by default so an unfiltered quarterly delta cannot
+ * flood the agent's context — callers opt into more via maxItemsPerList.
+ */
+export const DELTA_LIST_CAP = 25;
 /** Max symbols per modforge_bridge_report call (chunk larger batches). */
 const MAX_BATCH = 200;
 
@@ -119,6 +125,22 @@ function optStr(args: Args, key: string): string | undefined {
   return v;
 }
 
+function optBool(args: Args, key: string): boolean | undefined {
+  const v = args[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== 'boolean') throw new ToolInputError(`'${key}' must be a boolean when present`);
+  return v;
+}
+
+function optPosInt(args: Args, key: string): number | undefined {
+  const v = args[key];
+  if (v === undefined) return undefined;
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) {
+    throw new ToolInputError(`'${key}' must be a positive integer when present`);
+  }
+  return v;
+}
+
 function reqEnum<T extends string>(args: Args, key: string, allowed: readonly T[]): T {
   const v = args[key];
   if (typeof v !== 'string' || !(allowed as readonly string[]).includes(v)) {
@@ -166,37 +188,61 @@ function parseSymbolQuery(v: unknown, where: string): SymbolQuery {
 interface CappedList<T> {
   /** Complete count BEFORE capping — always authoritative. */
   total: number;
+  /** Count actually included in `items` after the cap. */
+  returned: number;
   truncated: boolean;
   items: T[];
 }
 
-function capList<T>(list: readonly T[]): CappedList<T> {
-  return { total: list.length, truncated: list.length > DELTA_LIST_CAP, items: list.slice(0, DELTA_LIST_CAP) };
+function capList<T>(list: readonly T[], cap: number): CappedList<T> {
+  const items = list.slice(0, cap);
+  return { total: list.length, returned: items.length, truncated: list.length > cap, items };
 }
 
-function shapeDelta(d: ApiDelta, filterPrefix: string | undefined): Record<string, unknown> {
+export function shapeDelta(d: ApiDelta, filterPrefix: string | undefined, cap: number): Record<string, unknown> {
   const p = filterPrefix;
   const kc = (n: string): boolean => p === undefined || n.startsWith(p);
   const km = (m: MemberChange): boolean => kc(m.owner);
   const kr = (c: RenameCandidate): boolean => kc(c.from.owner);
+  const lists = {
+    classesAdded: capList(d.classesAdded.filter(kc), cap),
+    classesRemoved: capList(d.classesRemoved.filter(kc), cap),
+    methodsAdded: capList(d.methodsAdded.filter(km), cap),
+    methodsRemoved: capList(d.methodsRemoved.filter(km), cap),
+    methodsDescChanged: capList(d.methodsDescChanged.filter(km), cap),
+    fieldsAdded: capList(d.fieldsAdded.filter(km), cap),
+    fieldsRemoved: capList(d.fieldsRemoved.filter(km), cap),
+    fieldsDescChanged: capList(d.fieldsDescChanged.filter(km), cap),
+    classRenameCandidates: capList(d.classRenameCandidates.filter(kr), cap),
+    memberRenameCandidates: capList(d.memberRenameCandidates.filter(kr), cap),
+  };
+  const truncated = Object.values(lists).some((l) => l.truncated);
   return {
     fromVersion: d.fromId,
     toVersion: d.toId,
     filterPrefix: p ?? null,
+    listCap: cap,
+    truncated,
     note:
-      `Each list is capped at ${DELTA_LIST_CAP} items ('total'/'truncated' are authoritative; ` +
-      `narrow with filterPrefix to see more). added/removed/descChanged lists are EXACT surface ` +
-      `facts; renameCandidates are CANDIDATE-grade structural evidence only — never auto-apply.`,
-    classesAdded: capList(d.classesAdded.filter(kc)),
-    classesRemoved: capList(d.classesRemoved.filter(kc)),
-    methodsAdded: capList(d.methodsAdded.filter(km)),
-    methodsRemoved: capList(d.methodsRemoved.filter(km)),
-    methodsDescChanged: capList(d.methodsDescChanged.filter(km)),
-    fieldsAdded: capList(d.fieldsAdded.filter(km)),
-    fieldsRemoved: capList(d.fieldsRemoved.filter(km)),
-    fieldsDescChanged: capList(d.fieldsDescChanged.filter(km)),
-    classRenameCandidates: capList(d.classRenameCandidates.filter(kr)),
-    memberRenameCandidates: capList(d.memberRenameCandidates.filter(kr)),
+      `Each list is capped at ${cap} items by default (per-list 'total'/'returned'/'truncated' are ` +
+      `authoritative). To see more of a truncated list, narrow with filterPrefix (e.g. ` +
+      `'net/minecraft/world') and/or raise maxItemsPerList. added/removed/descChanged lists are EXACT ` +
+      `surface facts; renameCandidates are CANDIDATE-grade structural evidence only — never auto-apply.`,
+    ...lists,
+  };
+}
+
+/**
+ * Default bridge_report shaping: audit chains are the bulk of a large batch and
+ * are rarely needed for an EXACT-heavy apply run, so every `chain` is dropped
+ * unless the caller opts in (includeChains). Summary counts and per-resolution
+ * reasons/candidate evidence — the actionable parts — are always kept. Returns a
+ * new object; never mutates the engine's result.
+ */
+export function compactBridgeReport(report: BridgeReport): BridgeReport {
+  return {
+    ...report,
+    resolutions: report.resolutions.map((r) => (r.chain.length === 0 ? r : { ...r, chain: [] })),
   };
 }
 
@@ -273,8 +319,11 @@ const TOOLS: ToolDef[] = [
     description:
       `Batch form of modforge_resolve_symbol: resolve up to ${MAX_BATCH} old-era symbols against one ` +
       'target version in a single call (one shared bridge init), returning per-symbol resolutions ' +
-      '(taxonomy + audit chains) plus summary counts {exact, candidate, unresolved}. Prefer this over ' +
-      `many single calls when porting a whole file or mod. ${TAXONOMY_NOTE}`,
+      '(taxonomy + reasons) plus summary counts {exact, candidate, unresolved}. Prefer this over many ' +
+      'single calls when porting a whole file or mod; for context-limited agents, ~50 symbols per call ' +
+      'keeps responses small. Audit chains are omitted by default to stay within tool-output budgets — ' +
+      'pass includeChains:true for the full per-hop audit trail. First call per version pair downloads ' +
+      `and parses official mappings/jars (~10-30 s); cached afterwards. ${TAXONOMY_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -291,6 +340,11 @@ const TOOLS: ToolDef[] = [
             additionalProperties: false,
           },
         },
+        includeChains: {
+          type: 'boolean',
+          description:
+            'Include the full per-hop audit chain on every resolution (default false — chains are omitted to stay within tool-output budgets; summary counts, reasons, and candidate evidence are always present).',
+        },
       },
       required: ['fromVersion', 'toVersion', 'namespace', 'symbols'],
       additionalProperties: false,
@@ -299,6 +353,7 @@ const TOOLS: ToolDef[] = [
       const fromVersion = reqStr(args, 'fromVersion');
       const toVersion = reqStr(args, 'toVersion');
       const namespace = reqEnum<SourceNamespace>(args, 'namespace', ['named', 'source']);
+      const includeChains = optBool(args, 'includeChains') ?? false;
       const raw = args['symbols'];
       if (!Array.isArray(raw) || raw.length === 0) {
         throw new ToolInputError(`'symbols' must be a non-empty array of {kind, owner, name?, desc?}`);
@@ -307,7 +362,8 @@ const TOOLS: ToolDef[] = [
         throw new ToolInputError(`'symbols' has ${raw.length} entries — max ${MAX_BATCH} per call; split into chunks`);
       }
       const symbols = raw.map((v, i) => parseSymbolQuery(v, `symbols[${i}]`));
-      return engine.bridgeReport(fromVersion, toVersion, namespace, symbols);
+      const report = await engine.bridgeReport(fromVersion, toVersion, namespace, symbols);
+      return includeChains ? report : compactBridgeReport(report);
     },
   },
   {
@@ -318,9 +374,10 @@ const TOOLS: ToolDef[] = [
       'it works for ANY pair including 26.x -> 26.x where no mappings exist: classes/methods/fields ' +
       'added/removed/descriptor-changed (EXACT surface facts) plus labeled structural rename ' +
       'CANDIDATES (bijective matching with evidence + score; renames are structurally unprovable and ' +
-      `are NEVER asserted as fact). Lists are capped at ${DELTA_LIST_CAP} entries each with authoritative ` +
-      "totals — narrow with filterPrefix (e.g. 'net/minecraft/world') when a list truncates. " +
-      'First call per version downloads its client jar (~10-30 s); cached afterwards.',
+      `are NEVER asserted as fact). Each list is capped at ${DELTA_LIST_CAP} entries by default with ` +
+      "authoritative totals — narrow with filterPrefix (e.g. 'net/minecraft/world') when a list " +
+      'truncates, and/or raise maxItemsPerList for a larger sample. First call per version downloads ' +
+      'its client jar (~10-30 s); cached afterwards.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -329,6 +386,11 @@ const TOOLS: ToolDef[] = [
         filterPrefix: {
           type: 'string',
           description: "Only report classes/owners under this binary-name prefix, e.g. 'net/minecraft' (dotted accepted)",
+        },
+        maxItemsPerList: {
+          type: 'integer',
+          minimum: 1,
+          description: `Max entries returned per list (default ${DELTA_LIST_CAP}); raise to opt into a larger response. Each list's 'total' is always the authoritative full count.`,
         },
       },
       required: ['fromVersion', 'toVersion'],
@@ -339,8 +401,9 @@ const TOOLS: ToolDef[] = [
       const toVersion = reqStr(args, 'toVersion');
       const rawPrefix = optStr(args, 'filterPrefix');
       const prefix = rawPrefix === undefined || rawPrefix === '' ? undefined : toBinaryName(rawPrefix.trim());
+      const cap = optPosInt(args, 'maxItemsPerList') ?? DELTA_LIST_CAP;
       const delta = await engine.apiDelta(fromVersion, toVersion);
-      return shapeDelta(delta, prefix);
+      return shapeDelta(delta, prefix, cap);
     },
   },
   {
@@ -353,7 +416,8 @@ const TOOLS: ToolDef[] = [
       "bare names ('tick'), and wildcards ('render*'). Returns a taxonomy resolution with descriptors " +
       'resolved from the jar and inherited-member/overload ambiguity surfaced honestly. NOTE: this is ' +
       'signature-level verification — an @At INVOKE/FIELD target additionally needs instruction-level ' +
-      `verification before auto-applying. ${TAXONOMY_NOTE}`,
+      'verification before auto-applying. First call for a target version downloads and parses its ' +
+      `client jar (~10-30 s); cached afterwards. ${TAXONOMY_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -402,9 +466,18 @@ function toolDescriptor(t: ToolDef): Record<string, unknown> {
  * Map a tool failure to honest, actionable text. Only genuine failures land here
  * — UNRESOLVED resolutions are success payloads and never reach this path.
  */
-function toolFailureText(e: unknown): string {
+export function toolFailureText(e: unknown): string {
   if (e instanceof ToolInputError || e instanceof EngineInputError) return `Invalid arguments: ${e.message}`;
-  if (e instanceof ArtifactUnavailableError) return `[${e.code}] ${e.message}`;
+  if (e instanceof ArtifactUnavailableError) {
+    if (e.code === 'UNKNOWN_VERSION') {
+      // The library message coaches toward extraManifestUrls — a FetchCache
+      // constructor option with no equivalent on the MCP surface. Drop that
+      // clause and name the tool that actually lists valid ids.
+      const factual = e.message.replace(/\s*[^.]*extraManifestUrls[^.]*\.\s*/g, ' ').trim();
+      return `[${e.code}] ${factual} Call modforge_versions to list valid version ids.`;
+    }
+    return `[${e.code}] ${e.message}`;
+  }
   if (e instanceof FetchError) {
     return (
       `Fetch failed: ${e.message} — network or artifact-integrity failure (the message carries the ` +
@@ -531,8 +604,22 @@ async function handleRequest(id: RequestId, method: string, params: unknown): Pr
   }
 }
 
+/**
+ * Normalize one raw stdin line before JSON parsing: strip a leading UTF-8 BOM
+ * (U+FEFF) and a trailing CR. Windows PowerShell prepends a BOM to piped stdin,
+ * which would otherwise fail JSON.parse on the very first message; CRLF clients
+ * leave a trailing CR. Spawning MCP clients send neither — this is for the
+ * hand-testing path. A legitimate JSON-RPC line never starts with U+FEFF.
+ */
+export function normalizeLine(line: string): string {
+  let s = line;
+  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
+  if (s.endsWith('\r')) s = s.slice(0, -1);
+  return s;
+}
+
 function handleLine(line: string): void {
-  const trimmed = line.endsWith('\r') ? line.slice(0, -1) : line;
+  const trimmed = normalizeLine(line);
   if (trimmed.trim() === '') return;
   let msg: unknown;
   try {
@@ -570,32 +657,48 @@ function handleLine(line: string): void {
 // Entry
 // ---------------------------------------------------------------------------
 
-if (argv.includes('--help') || argv.includes('-h')) {
-  stdout.write(HELP);
-  exit(0);
+/** True only when this module is the process entry point (node src/mcp/server.ts
+ *  or the modforge-mcp bin) — never when imported by a test or another module. */
+function runningAsEntryPoint(): boolean {
+  const entry = argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
-stdin.setEncoding('utf8');
-let buffer = '';
-stdin.on('data', (chunk: string) => {
-  buffer += chunk;
-  let nl: number;
-  while ((nl = buffer.indexOf('\n')) !== -1) {
-    const line = buffer.slice(0, nl);
-    buffer = buffer.slice(nl + 1);
-    handleLine(line);
+function startServer(): void {
+  if (argv.includes('--help') || argv.includes('-h')) {
+    stdout.write(HELP);
+    exit(0);
   }
-});
-// Graceful shutdown (spec): client closes stdin → finish in-flight work, exit 0.
-stdin.on('end', () => {
-  stdinEnded = true;
-  maybeExit();
-});
-stdin.on('close', () => {
-  stdinEnded = true;
-  maybeExit();
-});
-process.on('SIGINT', () => exit(0));
-process.on('SIGTERM', () => exit(0));
 
-stderr.write(`${SERVER_NAME} ${SERVER_VERSION} ready (stdio, newline-delimited JSON-RPC; protocol ${LATEST_PROTOCOL})\n`);
+  stdin.setEncoding('utf8');
+  let buffer = '';
+  stdin.on('data', (chunk: string) => {
+    buffer += chunk;
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl);
+      buffer = buffer.slice(nl + 1);
+      handleLine(line);
+    }
+  });
+  // Graceful shutdown (spec): client closes stdin → finish in-flight work, exit 0.
+  stdin.on('end', () => {
+    stdinEnded = true;
+    maybeExit();
+  });
+  stdin.on('close', () => {
+    stdinEnded = true;
+    maybeExit();
+  });
+  process.on('SIGINT', () => exit(0));
+  process.on('SIGTERM', () => exit(0));
+
+  stderr.write(`${SERVER_NAME} ${SERVER_VERSION} ready (stdio, newline-delimited JSON-RPC; protocol ${LATEST_PROTOCOL})\n`);
+}
+
+if (runningAsEntryPoint()) startServer();
