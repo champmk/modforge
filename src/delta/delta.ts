@@ -305,12 +305,27 @@ function computeClassRenameCandidates(from: JarApi, to: JarApi, delta: ApiDelta)
     return m.other.name < b.other.name;
   };
 
+  // Two matches are evidence-equal when every structural dimension ties — the
+  // lexicographic arm of `better` exists only for deterministic SORTING and
+  // must never be allowed to fake a decision between them.
+  const evidenceEqual = (a: ClassMatch, b: ClassMatch): boolean =>
+    a.score === b.score && a.suffixLen === b.suffixLen && a.editSim === b.editSim;
+
   const bestIn = (self: ClassSide, pool: ClassSide[]): ClassMatch | null => {
     let best: ClassMatch | null = null;
+    let second: ClassMatch | null = null;
     for (const other of pool) {
       const m = matchOf(self, other);
-      if (m && (!best || better(m, best))) best = m;
+      if (!m) continue;
+      if (!best || better(m, best)) {
+        second = best;
+        best = m;
+      } else if (!second || better(m, second)) {
+        second = m;
+      }
     }
+    // A tie on the actual evidence = structural ambiguity = no best match.
+    if (best && second && evidenceEqual(best, second)) return null;
     return best;
   };
 
