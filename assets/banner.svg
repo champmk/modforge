@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b1f26"/>
+      <stop offset="1" stop-color="#15181e"/>
+    </linearGradient>
+    <linearGradient id="molten" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fcd34d"/>
+      <stop offset="0.35" stop-color="#fbbf24"/>
+      <stop offset="0.7" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="ember" x1="120" y1="0" x2="292" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.45" r="0.6">
+      <stop offset="0" stop-color="#f97316" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#f97316" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0v32" fill="none" stroke="#232831" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="320" fill="url(#bg)"/>
+  <rect width="1280" height="320" fill="url(#grid)" opacity="0.45"/>
+
+  <!-- mapping-chain motif -->
+  <g opacity="0.7">
+    <line x1="880" y1="252" x2="1240" y2="252" stroke="#2c333f" stroke-width="2"/>
+    <circle cx="880" cy="252" r="5" fill="#39414f"/>
+    <circle cx="970" cy="252" r="5" fill="#39414f"/>
+    <circle cx="1060" cy="252" r="6" fill="#f97316"/>
+    <circle cx="1150" cy="252" r="5" fill="#39414f"/>
+    <circle cx="1240" cy="252" r="5" fill="#39414f"/>
+  </g>
+
+  <!-- forged voxel icon -->
+  <g transform="translate(36,16) scale(0.565)">
+    <ellipse cx="330" cy="300" rx="200" ry="160" fill="url(#glow)"/>
+    <polygon points="256,98 406,173 256,248 106,173" fill="#454e60"/>
+    <polygon points="106,173 256,248 256,408 106,333" fill="#272d38"/>
+    <polygon points="256,248 406,173 406,333 256,408" fill="url(#molten)"/>
+    <polygon points="256,248 406,173 406,191 256,266" fill="#fde68a" opacity="0.85"/>
+    <polygon points="256,390 406,315 406,333 256,408" fill="#c2410c" opacity="0.8"/>
+    <polyline points="256,244 264,206 246,172 258,134 256,102" fill="none" stroke="#fbbf24" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="256" y1="248" x2="256" y2="408" stroke="#f97316" stroke-width="16" opacity="0.35"/>
+    <line x1="256" y1="248" x2="256" y2="408" stroke="#fde68a" stroke-width="7" stroke-linecap="round"/>
+    <rect x="428" y="148" width="13" height="13" fill="#fbbf24" opacity="0.9" transform="rotate(45 434.5 154.5)"/>
+    <rect x="452" y="212" width="9" height="9" fill="#f97316" opacity="0.85" transform="rotate(45 456.5 216.5)"/>
+    <rect x="414" y="106" width="8" height="8" fill="#fde68a" opacity="0.8" transform="rotate(45 418 110)"/>
+  </g>
+
+  <!-- MODFORGE wordmark, constructed from geometric letterforms (grid: cap 40, stem 8, cut 6) -->
+  <g transform="translate(330,104) scale(1.65)">
+    <!-- M -->
+    <path transform="translate(0,0)" fill="#e9edf3" d="M0 0h8v40H0V0z M26 0h8v40h-8V0z M0 0 17 18 34 0v12L17 30 0 12V0z"/>
+    <!-- O -->
+    <path transform="translate(44,0)" fill="#e9edf3" fill-rule="evenodd" d="M6 0h16l6 6v28l-6 6H6l-6-6V6l6-6zm2 8v24h12V8H8z"/>
+    <!-- D -->
+    <path transform="translate(82,0)" fill="#e9edf3" fill-rule="evenodd" d="M0 0h20l8 8v24l-8 8H0V0zm8 8v24h9l3-3V11l-3-3H8z"/>
+    <!-- F -->
+    <path transform="translate(120,0)" fill="url(#ember)" d="M0 0h24v8H8v8h13v8H8v16H0V0z"/>
+    <!-- O -->
+    <path transform="translate(154,0)" fill="url(#ember)" fill-rule="evenodd" d="M6 0h16l6 6v28l-6 6H6l-6-6V6l6-6zm2 8v24h12V8H8z"/>
+    <!-- R -->
+    <path transform="translate(192,0)" fill="url(#ember)" d="M0 0h8v40H0V0z M8 0h14l6 6v12l-6 6H8v-8h10l2-2v-4l-2-2H8V0z M14 24h8l6 16h-8l-6-16z"/>
+    <!-- G -->
+    <path transform="translate(230,0)" fill="url(#ember)" d="M28 0H6L0 6v28l6 6h16l6-6V20H14v8h6v4H8V8h20V0z"/>
+    <!-- E -->
+    <path transform="translate(268,0)" fill="url(#ember)" d="M0 0h24v8H8v8h13v8H8v8h16v8H0V0z"/>
+  </g>
+
+  <text x="332" y="216" font-family="ui-sans-serif, system-ui, sans-serif" font-size="29" letter-spacing="0.5" fill="#98a2b3">Deterministic mod migration for Minecraft</text>
+</svg>
