@@ -7,6 +7,9 @@
   "engines": { "node": ">=24" },
   "bin": { "modforge": "./src/cli/main.ts" },
   "files": ["src", "README.md", "LICENSE"],
+  "repository": { "type": "git", "url": "git+https://github.com/champmk/modforge.git" },
+  "homepage": "https://github.com/champmk/modforge#readme",
+  "bugs": { "url": "https://github.com/champmk/modforge/issues" },
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit"
