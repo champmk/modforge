@@ -46,6 +46,7 @@ import {
 import { planGradleMigration, applyGradleMigration } from '../scan/gradle.ts';
 import { findMixinConfigs, scanMixinSource, collectTargetChecks, checkTargetsAgainstJar, type MixinClassScan } from '../scan/mixin.ts';
 import { bridgeEraHint, type BridgeEra } from './bridge-era.ts';
+import { decideNamespace, probeNamespaces, sampleClassNames } from './bridge-namespace.ts';
 
 const USAGE = `modforge — deterministic cross-version migration engine for Minecraft mods
 
@@ -148,8 +149,12 @@ async function classifyEra(cache: FetchCache, version: string): Promise<BridgeEr
 async function cmdBridge(args: Args): Promise<void> {
   const from = str(args.flags, 'from') ?? fail('--from <version> is required', 2);
   const to = str(args.flags, 'to') ?? fail('--to <version> is required', 2);
-  const ns = (str(args.flags, 'namespace') ?? 'named') as SourceNamespace;
-  if (ns !== 'named' && ns !== 'source') fail(`--namespace must be named or source, got ${ns}`, 2);
+  // null = the user did not pass --namespace, so we autodetect below; a value is
+  // honored verbatim (explicit always wins over autodetect).
+  const requestedNs = str(args.flags, 'namespace');
+  if (requestedNs !== null && requestedNs !== 'named' && requestedNs !== 'source') {
+    fail(`--namespace must be named or source, got ${requestedNs}`, 2);
+  }
   const dir = args.positional[0] ?? fail('a source directory is required', 2);
   try {
     statSync(dir);
@@ -173,6 +178,28 @@ async function cmdBridge(args: Args): Promise<void> {
       fail(bridgeEraHint({ from, to, dir, baseMessage: e.message, fromEra, toEra }), 1);
     }
     throw e;
+  }
+
+  // Namespace routing. A mod's classes are written in exactly ONE old-era namespace
+  // (yarn `named` for Fabric, mojmap `source` for NeoForge/multiloader); the engine
+  // supports both, so picking the wrong one resolves ~nothing. Respect an explicit
+  // --namespace; otherwise autodetect from a deterministic probe of the scanned
+  // class names against BOTH source tables (membership = the engine maps it under
+  // that namespace). Loud and always overridable — see ./bridge-namespace.ts.
+  let ns: SourceNamespace;
+  if (requestedNs !== null) {
+    ns = requestedNs as SourceNamespace;
+  } else {
+    const sample = sampleClassNames(
+      scanTree(dir)
+        .findings.map((f) => f.className)
+        .filter((c): c is string => !!c && (c.startsWith('net/minecraft') || c.startsWith('com/mojang'))),
+    );
+    const decision = decideNamespace(
+      probeNamespaces(sample, (probeNs, cls) => bridge.resolveClass(probeNs, cls).confidence !== 'UNRESOLVED'),
+    );
+    ns = decision.namespace;
+    if (decision.notice) console.error(decision.notice);
   }
 
   /** One scan+resolve pass over the tree (re-run between apply passes — the engine stays cached). */
