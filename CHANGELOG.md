@@ -5,7 +5,7 @@ All notable changes to ModForge are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.2] - 2026-06-11
 
 ### Added
 
@@ -57,8 +57,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version values are left in place and flagged for manual review with an
   instruction naming exactly what to set.
 - The MCP server tolerates a UTF-8 BOM on its first stdin message, validates
-  `memberInfo` before downloading the target jar, and its version errors only
-  suggest parameters that exist.
+  `memberInfo` before downloading the target jar, suggests only parameters that
+  exist in its version errors, and formats those errors in linear time even for
+  oversized inputs (no event-loop stall on a huge version id).
+- `mixin-check` fails with one line instead of a stack trace when the source
+  directory does not exist, and when it reports ABSENT classes its summary now
+  explains that for pre-26.x (yarn-named) mods most class misses are renames,
+  pointing at `modforge bridge`.
+- A read-only or locked build file makes `gradle-migrate --apply` refuse that
+  file and continue the batch with truthful counts (matching `bridge --apply`),
+  instead of crashing mid-migration.
+- `--no-color` is accepted on every command, as documented.
 - Color output: ANSI escapes are emitted only when stdout is a TTY and
   `NO_COLOR` is unset (`--no-color` still forces plain text), so piped output
   and CI logs stay clean.
@@ -82,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Files that are not valid UTF-8 are refused per-file with the offset of the
   first invalid byte instead of being silently rewritten with U+FFFD
   replacement characters; `gradle-migrate` backups are raw byte copies.
-- `gradle-migrate --apply` now backs originals up under `.modforge-backup/`
+- `gradle-migrate --apply` now backs originals up under `.modforge/backup/`
   before writing — the same safety contract as `bridge --apply` (previously it
   wrote build files with no backup).
 
@@ -105,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `modforge delta` prints a readable summary by default (`--json` unchanged).
 - MCP: `modforge_resolve_symbol` now points agents at `modforge_bridge_report`
   for batch resolution (up to 200 symbols per call).
+- The npm package ships only runnable JavaScript: type declarations are no
+  longer emitted (they carried the sources' `.ts` import specifiers and were
+  unusable by TypeScript consumers; the package's surface is its two bins).
 
 ## [0.1.1] - 2026-06-10
 
@@ -160,6 +172,6 @@ Initial release.
   Mojang piston-data, sha1-verified, and cached in `~/.modforge/cache`;
   never redistributed.
 
-[Unreleased]: https://github.com/champmk/modforge/compare/v0.1.1...HEAD
+[0.1.2]: https://github.com/champmk/modforge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/champmk/modforge/releases/tag/v0.1.1
 [0.1.0]: https://www.npmjs.com/package/modforge/v/0.1.0

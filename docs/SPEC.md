@@ -177,7 +177,7 @@ Every resolution carries its full audit chain (every join hop that produced it).
 
 1. **Unit** (in `npm test`, reproducible from any clone): independently-derived test
    vectors for every parser and join (synthetic fixtures in the real formats; never
-   Mojang-copyrighted content in the repo). 165/165 tests green; strict `tsc` clean.
+   Mojang-copyrighted content in the repo). 170/170 tests green; strict `tsc` clean.
 2. **Real-corpus** (maintainer-run before each release; the corpus is pinned-commit mod
    checkouts that cannot be redistributed, so the scorer and answer keys are not in the
    repo): ModForge's EXACT set is scored against the real human-written port commit. The

@@ -1,6 +1,6 @@
 {
   "name": "modforge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Deterministic cross-version migration engine for Minecraft mods — bridge the 1.21.x → 26.x era and every version after, grounded in real mappings and real jars, never guesses.",
   "type": "module",
   "license": "MIT",

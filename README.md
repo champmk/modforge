@@ -52,8 +52,9 @@ AI assistants can ask it for version-truth instead of hallucinating.
 
 ## Quickstart
 
-Requires Node >= 24. (Installing from a git clone or a `github:` spec works too -- a
-`prepare` script builds `dist/` on install.)
+Requires Node >= 24. (Installing from a git clone or a `github:` spec into a project
+works too -- a `prepare` script builds `dist/` on install. For a global CLI use
+`npm install -g modforge`; npm itself cannot run build scripts on global git installs.)
 
 ```bash
 npx modforge versions
@@ -67,7 +68,7 @@ line naming the missing artifact. Then you get a report like this (excerpt from 
 run on AppleSkin):
 
 ```text
-modforge migration report — 1.21.11 → 26.1.2 (namespace named, modforge v0.1.1)
+modforge migration report — 1.21.11 → 26.1.2 (namespace named, modforge v0.1.2)
 for: path/to/your-mod/src/main/java
 
 summary: EXACT 402 · CANDIDATE 29 · UNRESOLVED 22 · total 453
@@ -198,7 +199,7 @@ work, not synthetic benchmarks:
   contradict the human port** -- 100% EXACT precision, 95.3% recall, at class level. The
   same run surfaced a hotfix rename (`GuiGraphics -> GuiGraphicsExtractor` in 26.1.2) that
   the merged human port had missed.
-- What you can reproduce directly: `npm test` (165/165 passing) and `npx tsc --noEmit`
+- What you can reproduce directly: `npm test` (170/170 passing) and `npx tsc --noEmit`
   (strict, clean) on a clone -- and any single EXACT in any report, because each one
   carries its full audit chain and is verified against the real target jar.
 
