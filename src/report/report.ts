@@ -566,6 +566,79 @@ function groupByFile(findings: readonly Finding[]): [string, Finding[]][] {
   return [...map.entries()].sort((a, b) => cmpStr(a[0], b[0]));
 }
 
+// ---------------------------------------------------------------------------
+// CANDIDATE decision rollup (shared by the terminal + markdown renderers)
+// ---------------------------------------------------------------------------
+
+/**
+ * The identity of a CANDIDATE *decision*: the from-symbol plus the full
+ * candidate set (target, score, evidence) plus the reason and audit chain — in
+ * short, the entire evidence block a reader studies to make ONE judgment call.
+ * Source location, surface tag, and id are per-SITE and deliberately excluded:
+ * the same decision reached at N sites shares one key, so identical evidence
+ * collapses to a single rendered block instead of being repeated per site.
+ */
+function candidateDecisionKey(f: Finding): string {
+  const r = f.resolution;
+  return JSON.stringify([
+    symbolKey(r.from),
+    (r.candidates ?? []).map((c) => [symbolKey(c.to), c.score, c.evidence]),
+    r.reason,
+    r.chain,
+  ]);
+}
+
+/** A unique CANDIDATE decision and every site that reaches it. */
+interface CandidateDecision {
+  /** A representative finding carrying the shared evidence block. */
+  rep: Finding;
+  /** Findings sharing this decision, in canonical finding order. */
+  sites: Finding[];
+}
+
+/**
+ * Group already-sorted CANDIDATE findings by unique decision. Decisions appear
+ * in the order their FIRST site appears (Map insertion order over the sorted
+ * input); sites within a decision stay in finding order. Both are deterministic,
+ * so the rollup never leaks input order.
+ */
+function groupCandidateDecisions(findings: readonly Finding[]): CandidateDecision[] {
+  const map = new Map<string, CandidateDecision>();
+  for (const f of findings) {
+    const key = candidateDecisionKey(f);
+    const d = map.get(key);
+    if (d) d.sites.push(f);
+    else map.set(key, { rep: f, sites: [f] });
+  }
+  return [...map.values()];
+}
+
+/** Compact one-site label `file:line:col` (line/col dropped when absent; '' file → the no-location marker). */
+function siteLabel(f: Finding): string {
+  const file = f.source.file ?? NO_FILE;
+  const loc = locText(f.source).replace(/^L/, '');
+  return loc === '' ? file : `${file}:${loc}`;
+}
+
+/** Max sites listed inline before the remainder is summarized as `(+K more)`. */
+const SITE_CAP = 10;
+
+/** `N sites: a, b, … (+K more)` — the true site count, then a capped inline list in finding order. */
+function siteList(sites: readonly Finding[]): string {
+  const labels = sites.map(siteLabel);
+  const shown = labels.slice(0, SITE_CAP);
+  const more = labels.length > shown.length ? ` (+${labels.length - shown.length} more)` : '';
+  return `${sites.length} site${sites.length === 1 ? '' : 's'}: ${shown.join(', ')}${more}`;
+}
+
+/** CANDIDATE heading tail: `N findings, K unique decisions` — the real judgment-call count. */
+function candidateCountLabel(findingCount: number, decisionCount: number): string {
+  return (
+    `${findingCount} finding${findingCount === 1 ? '' : 's'}, ` +
+    `${decisionCount} unique decision${decisionCount === 1 ? '' : 's'}`
+  );
+}
+
 const ruleDescriptions: ReadonlyMap<string, string> = new Map(GRADLE_RULES.map((r) => [r.id, r.description]));
 
 // ---------------------------------------------------------------------------
@@ -652,10 +725,30 @@ export function renderTerminal(report: MigrationReport, opts: TerminalRenderOpti
   const sorted = sortFindings(report.findings);
   for (const conf of CONFIDENCE_ORDER) {
     const group = sorted.filter((f) => f.resolution.confidence === conf);
+    // CANDIDATE collapses to one block per unique decision; EXACT/UNRESOLVED
+    // keep the per-file, per-finding layout unchanged.
+    const decisions = conf === 'CANDIDATE' ? groupCandidateDecisions(group) : null;
     lines.push('');
-    lines.push(paint(ANSI.bold + CONFIDENCE_COLOR[conf], `${conf} (${group.length})`) + ` — ${GROUP_NOTE[conf]}`);
+    const heading =
+      decisions !== null ? `CANDIDATE (${candidateCountLabel(group.length, decisions.length)})` : `${conf} (${group.length})`;
+    lines.push(paint(ANSI.bold + CONFIDENCE_COLOR[conf], heading) + ` — ${GROUP_NOTE[conf]}`);
     if (group.length === 0) {
       lines.push('  none');
+      continue;
+    }
+    if (decisions !== null) {
+      for (const decision of decisions) {
+        const r = decision.rep.resolution;
+        lines.push(`  ${r.from.kind} ${formatSymbol(r.from)}`);
+        for (const cand of r.candidates ?? []) {
+          lines.push(`    →? ${formatSymbol(cand.to)} ${paint(ANSI.bold, `(score ${cand.score})`)}`);
+          lines.push(`       ${cand.evidence}`);
+        }
+        if ((r.candidates ?? []).length === 0) lines.push('    (no candidates listed)');
+        lines.push(`    reason: ${r.reason}`);
+        for (const step of r.chain) lines.push(paint(ANSI.dim, `    · ${step}`));
+        lines.push(`    ${siteList(decision.sites)}`);
+      }
       continue;
     }
     for (const [file, items] of groupByFile(group)) {
@@ -671,12 +764,6 @@ export function renderTerminal(report: MigrationReport, opts: TerminalRenderOpti
           lines.push(
             `      → ${r.to !== undefined ? formatSymbol(r.to) : '<missing to — malformed EXACT resolution>'}`,
           );
-        } else if (conf === 'CANDIDATE') {
-          for (const cand of r.candidates ?? []) {
-            lines.push(`      →? ${formatSymbol(cand.to)} ${paint(ANSI.bold, `(score ${cand.score})`)}`);
-            lines.push(`         ${cand.evidence}`);
-          }
-          if ((r.candidates ?? []).length === 0) lines.push('      (no candidates listed)');
         }
         lines.push(`      reason: ${r.reason}`);
         if (f.appliedFix !== undefined) {
@@ -809,13 +896,46 @@ export function renderMarkdown(report: MigrationReport): string {
   const hasFixes = sorted.some((f) => f.appliedFix !== undefined || f.skipReason !== undefined);
   for (const conf of CONFIDENCE_ORDER) {
     const group = sorted.filter((f) => f.resolution.confidence === conf);
+    // CANDIDATE rolls up to one row per unique decision with a compact site
+    // list; EXACT/UNRESOLVED keep the per-file findings tables unchanged.
+    const decisions = conf === 'CANDIDATE' ? groupCandidateDecisions(group) : null;
     lines.push('');
-    lines.push(`## ${conf} (${group.length})`);
+    lines.push(
+      `## ${decisions !== null ? `CANDIDATE (${candidateCountLabel(group.length, decisions.length)})` : `${conf} (${group.length})`}`,
+    );
     lines.push('');
     lines.push(`*${GROUP_NOTE[conf]}*`);
     if (group.length === 0) {
       lines.push('');
       lines.push('none');
+      continue;
+    }
+    if (decisions !== null) {
+      lines.push('');
+      lines.push('| from | candidates (ranked, with evidence) | sites |');
+      lines.push('|---|---|---|');
+      for (const decision of decisions) {
+        const r = decision.rep.resolution;
+        const from = mdCode(`${r.from.kind} ${formatSymbol(r.from)}`);
+        const cands = (r.candidates ?? [])
+          .map((c) => `${mdCode(formatSymbol(c.to))} (score ${c.score}) — ${mdText(c.evidence)}`)
+          .join('<br><br>');
+        lines.push(`| ${from} | ${cands === '' ? '*(no candidates listed)*' : cands} | ${mdText(siteList(decision.sites))} |`);
+      }
+      lines.push('');
+      lines.push('<details>');
+      lines.push(
+        `<summary>Audit chains (${decisions.length} decision${decisions.length === 1 ? '' : 's'})</summary>`,
+      );
+      lines.push('');
+      for (const decision of decisions) {
+        const r = decision.rep.resolution;
+        lines.push(`- ${mdCode(formatSymbol(r.from))} — ${mdText(r.reason)}`);
+        if (r.chain.length === 0) lines.push('  - (no chain recorded)');
+        else for (let i = 0; i < r.chain.length; i++) lines.push(`  ${i + 1}. ${mdText(r.chain[i]!)}`);
+      }
+      lines.push('');
+      lines.push('</details>');
       continue;
     }
     for (const [file, items] of groupByFile(group)) {
