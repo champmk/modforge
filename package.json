@@ -4,12 +4,26 @@
   "description": "Deterministic cross-version migration engine for Minecraft mods — bridge the 1.21.x → 26.x era and every version after, grounded in real mappings and real jars, never guesses.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=24" },
-  "bin": { "modforge": "./dist/cli/main.js", "modforge-mcp": "./dist/mcp/server.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "repository": { "type": "git", "url": "git+https://github.com/champmk/modforge.git" },
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "modforge": "dist/cli/main.js",
+    "modforge-mcp": "dist/mcp/server.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/champmk/modforge.git"
+  },
   "homepage": "https://github.com/champmk/modforge#readme",
-  "bugs": { "url": "https://github.com/champmk/modforge/issues" },
+  "bugs": {
+    "url": "https://github.com/champmk/modforge/issues"
+  },
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc --noEmit",
@@ -17,7 +31,18 @@
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["minecraft", "modding", "fabric", "neoforge", "migration", "mappings", "yarn", "mojmap", "porting", "26.1"],
+  "keywords": [
+    "minecraft",
+    "modding",
+    "fabric",
+    "neoforge",
+    "migration",
+    "mappings",
+    "yarn",
+    "mojmap",
+    "porting",
+    "26.1"
+  ],
   "devDependencies": {
     "@types/node": "^24",
     "typescript": "^6.0.3"
