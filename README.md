@@ -50,6 +50,18 @@ name-and-descriptor lookup against the actual target jar. When the data cannot p
 answer, ModForge says so, with the precise reason. The same engine is exposed over MCP, so
 AI assistants can ask it for version-truth instead of hallucinating.
 
+## What ModForge is — and isn't
+
+A port has two parts: translating every reference, and adapting your code to semantic
+changes. ModForge mechanizes the first and gives you an honest map of the second. It is
+not a dictionary — a dictionary can't verify a name against the target jar, walk
+inheritance, pick the right overload from your callsite, or rewrite a file all-or-nothing
+and refuse when it can't prove every occurrence. And it is not (yet) a full migration
+engine: signature changes, removals, and behavioral shifts come back as evidence —
+CANDIDATEs with provenance, UNRESOLVEDs with reasons, a complete API delta — not as edits.
+That refusal is deliberate: one confidently wrong rename costs more than the manual port
+did. The roadmap below eats the unprovable remainder one provable category at a time.
+
 ## Quickstart
 
 Requires Node >= 24. (Installing from a git clone or a `github:` spec into a project
