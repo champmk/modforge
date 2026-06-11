@@ -496,6 +496,15 @@ function countCallArgs(toks: Tok[], open: number): number | null {
         if (depth === 0) return any ? commas + 1 : 0;
       } else if (t.text === ',' && depth === 1) {
         commas++;
+      } else if (t.text === '<' && depth >= 1 && toks[i - 1]?.text === '.') {
+        // `receiver.<TypeArgs>member(…)` — after a dot, `<` can ONLY open an
+        // explicit type-witness in valid Java (never a comparison), so the run
+        // is skipped whole and its commas never count as argument separators.
+        const g = tryParseGenerics(toks, i);
+        if (!g) return null; // malformed witness — not lexically countable
+        any = true;
+        i = g.end;
+        continue;
       } else if (t.text === '<' && depth >= 1 && toks[i - 1]?.kind === 'ident') {
         const g = tryParseGenerics(toks, i);
         if (g) {

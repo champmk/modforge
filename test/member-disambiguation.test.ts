@@ -210,3 +210,18 @@ test('countCallArgs: f() → 0', () => {
 test('countCallArgs: f((a < b) ? x : y) → 1 (parenthesized comparison is unambiguous)', () => {
   assert.equal(argCountOf('f((a < b) ? x : y)', 'f'), 1);
 });
+
+// Dotted MULTI-type-arg witnesses: after a `.`, a `<` can only open a type
+// witness in valid Java (never a comparison), so the run's commas are type-arg
+// separators and must never count as call-argument separators.
+test('countCallArgs: f(Map.<String,Integer>of(k, v)) → 1 (dotted multi-arg witness)', () => {
+  assert.equal(argCountOf('f(Map.<String,Integer>of(k, v))', 'f'), 1);
+});
+
+test('countCallArgs: f(this.<A,B>g(x)) → 1 (this-qualified multi-arg witness)', () => {
+  assert.equal(argCountOf('f(this.<A,B>g(x))', 'f'), 1);
+});
+
+test('countCallArgs: f(obj.<A,B>g(x), y) → 2 (witness skipped, real separator counted)', () => {
+  assert.equal(argCountOf('f(obj.<A,B>g(x), y)', 'f'), 2);
+});
