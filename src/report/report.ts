@@ -805,6 +805,41 @@ export function renderTerminal(report: MigrationReport, opts: TerminalRenderOpti
     lines.push(`  member rename candidates (methods + fields): ${d.memberRenameCandidates} — all CANDIDATE-grade`);
   }
 
+  // Closing block: by the time output reaches here the summary and section
+  // guidance scrolled off the top of the terminal, and on a real port the last
+  // visible line is some lone UNRESOLVED reason. Restate the verdict and tell a
+  // mid-port modder exactly what to do next — one next-step per non-empty
+  // bucket (CANDIDATE → UNRESOLVED → EXACT) plus the tips that still apply.
+  const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+  const uniqueDecisions = groupCandidateDecisions(
+    sorted.filter((f) => f.resolution.confidence === 'CANDIDATE'),
+  ).length;
+  const anyApplied = sorted.some((f) => f.appliedFix !== undefined);
+
+  lines.push('');
+  lines.push(
+    `modforge: summary — ` +
+      `${paint(CONFIDENCE_COLOR.EXACT, `EXACT ${s.exact}`)} · ` +
+      `${paint(CONFIDENCE_COLOR.CANDIDATE, `CANDIDATE ${s.candidate}`)}` +
+      (s.candidate > 0 ? ` (${plural(uniqueDecisions, 'unique decision')})` : '') +
+      ` · ${paint(CONFIDENCE_COLOR.UNRESOLVED, `UNRESOLVED ${s.unresolved}`)} · total ${s.total}`,
+  );
+  if (s.candidate > 0) {
+    lines.push(`modforge: ${plural(uniqueDecisions, 'decision')} ${uniqueDecisions === 1 ? 'needs' : 'need'} your judgment — the evidence is above`);
+  }
+  if (s.unresolved > 0) {
+    lines.push(`modforge: ${plural(s.unresolved, 'reference')} ${s.unresolved === 1 ? 'needs' : 'need'} a manual port — each lists its precise reason`);
+  }
+  // The --apply tip is suppressed once anything has been applied (the report
+  // carries those fixes), so a re-run never re-advertises work already done.
+  if (s.exact > 0 && !anyApplied) {
+    lines.push(
+      `modforge: ${plural(s.exact, 'rename')} ${s.exact === 1 ? 'is' : 'are'} deterministic and jar-verified — ` +
+        `modforge bridge ... --apply writes them (originals backed up)`,
+    );
+  }
+  lines.push('modforge: tip: --out report.md for a shareable report');
+
   return lines.join('\n') + '\n';
 }
 
@@ -952,7 +987,7 @@ export function renderMarkdown(report: MigrationReport): string {
       const unique = new Map<string, { f: Finding; count: number }>();
       for (const f of items) {
         const k =
-          symbolKey(f.resolution.from) + ' ' + f.resolution.reason + ' ' + f.resolution.chain.join(' ');
+          symbolKey(f.resolution.from) + '\u0000' + f.resolution.reason + '\u0000' + f.resolution.chain.join('\u0000');
         const seen = unique.get(k);
         if (seen) seen.count++;
         else unique.set(k, { f, count: 1 });
