@@ -50,13 +50,17 @@ test('suggest: returns the nearest flag within a small edit distance, else undef
 // ---------------------------------------------------------------------------
 
 test('registry: the documented commands and their flags', () => {
-  assert.deepEqual(COMMAND_FLAGS['bridge'], ['from', 'to', 'namespace', 'apply', 'json', 'out', 'no-color']);
-  assert.deepEqual(COMMAND_FLAGS['delta'], ['from', 'to', 'out', 'json']);
+  assert.deepEqual(COMMAND_FLAGS['bridge'], ['from', 'to', 'namespace', 'apply', 'json', 'out', 'no-color', 'offline']);
+  assert.deepEqual(COMMAND_FLAGS['delta'], ['from', 'to', 'out', 'json', 'offline']);
   assert.deepEqual(COMMAND_FLAGS['gradle-migrate'], ['apply']);
-  assert.deepEqual(COMMAND_FLAGS['mixin-check'], ['target']);
-  assert.deepEqual(COMMAND_FLAGS['versions'], []);
-  // --offline does NOT exist yet (a later item adds it) — guard against a premature add.
-  assert.ok(!COMMAND_FLAGS['bridge']!.includes('offline'), '--offline is not a flag yet');
+  assert.deepEqual(COMMAND_FLAGS['mixin-check'], ['target', 'offline']);
+  assert.deepEqual(COMMAND_FLAGS['versions'], ['offline']);
+  // --offline (P1-10) is accepted exactly on the commands that build a FetchCache...
+  for (const cmd of ['bridge', 'delta', 'mixin-check', 'versions']) {
+    assert.ok(COMMAND_FLAGS[cmd]!.includes('offline'), `--offline must be a flag on ${cmd}`);
+  }
+  // ...and nowhere else: gradle-migrate never touches the network.
+  assert.ok(!COMMAND_FLAGS['gradle-migrate']!.includes('offline'), 'gradle-migrate fetches nothing — no --offline');
 });
 
 test('every documented flag (and the global flags) is accepted on its command', () => {
@@ -92,7 +96,7 @@ test('a typo\'d flag is rejected with a did-you-mean', () => {
 test('an unknown flag with no close match lists the valid flags instead', () => {
   const m = checkUnknownFlags('mixin-check', ['frobnicate']);
   assert.match(String(m), /unknown flag --frobnicate for 'mixin-check'/);
-  assert.match(String(m), /valid flags: --target, --help/, 'names every accepted flag when no suggestion fits');
+  assert.match(String(m), /valid flags: --target, --offline, --help/, 'names every accepted flag when no suggestion fits');
   assert.doesNotMatch(String(m), /did you mean/, 'no spurious suggestion for a far-off flag');
 });
 

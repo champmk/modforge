@@ -404,8 +404,8 @@ export class FetchCache {
       throw new ArtifactUnavailableError(
         'OFFLINE_NOT_CACHED',
         cached === null
-          ? `Offline: ${what} is not cached (expected at ${path}).`
-          : `Offline: cached ${what} fails sha1/size verification (${path}) — delete it and re-fetch online.`,
+          ? `Offline mode (--offline/MODFORGE_OFFLINE): ${what} is not in the cache (expected at ${path}), so the download was blocked — re-run online once to populate the cache.`
+          : `Offline mode (--offline/MODFORGE_OFFLINE): cached ${what} fails sha1/size verification (${path}); offline mode blocked re-downloading it — delete it and re-run online.`,
       );
     }
     const data = await this.httpGet(pin.url);
@@ -427,7 +427,10 @@ export class FetchCache {
       return { path, data: cached, wasCache: true };
     }
     if (this.offline) {
-      throw new ArtifactUnavailableError('OFFLINE_NOT_CACHED', `Offline: ${url} is not cached (expected at ${path}).`);
+      throw new ArtifactUnavailableError(
+        'OFFLINE_NOT_CACHED',
+        `Offline mode (--offline/MODFORGE_OFFLINE): ${url} is not in the cache (expected at ${path}), so the download was blocked — re-run online once to populate the cache.`,
+      );
     }
     let data: Buffer;
     try {
@@ -436,7 +439,7 @@ export class FetchCache {
       if (cached !== null) {
         throw new FetchError(
           `${e instanceof Error ? e.message : String(e)} — a stale cached copy exists at ${path}; ` +
-            `pass { offline: true } to use it knowingly.`,
+            `re-run with --offline (or set MODFORGE_OFFLINE) to use the cached copy without the network.`,
         );
       }
       throw e;
@@ -454,7 +457,10 @@ export class FetchCache {
       return { tiny: extractTiny(cached, filename), version: mavenVersion, jarPath: path, wasCache: true };
     }
     if (this.offline) {
-      throw new ArtifactUnavailableError('OFFLINE_NOT_CACHED', `Offline: ${filename} is not cached with a valid .sha1 sidecar (expected at ${path}).`);
+      throw new ArtifactUnavailableError(
+        'OFFLINE_NOT_CACHED',
+        `Offline mode (--offline/MODFORGE_OFFLINE): ${filename} is not in the cache with a valid .sha1 sidecar (expected at ${path}), so the download was blocked — re-run online once to populate the cache.`,
+      );
     }
     // Maven publishes a .sha1 sidecar per artifact; both must fetch and agree.
     const shaRaw = (await this.httpGet(`${url}.sha1`)).toString('utf8').trim();
@@ -476,7 +482,10 @@ export class FetchCache {
   /** One retry max, and only for network errors / HTTP 5xx — 4xx is deterministic. */
   private async httpGet(url: string): Promise<Buffer> {
     if (this.offline) {
-      throw new ArtifactUnavailableError('OFFLINE_NOT_CACHED', `Offline mode: refusing network fetch of ${url}.`);
+      throw new ArtifactUnavailableError(
+        'OFFLINE_NOT_CACHED',
+        `Offline mode (--offline/MODFORGE_OFFLINE): refusing to fetch ${url} — re-run online to populate the cache.`,
+      );
     }
     let lastFailure = '';
     for (let attempt = 1; attempt <= 2; attempt++) {

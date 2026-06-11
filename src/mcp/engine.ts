@@ -217,7 +217,10 @@ export class ModForgeEngine {
   private readonly deltas = new Map<string, Promise<ApiDelta>>();
 
   constructor(opts: { cache?: FetchCache } = {}) {
-    this.cache = opts.cache ?? new FetchCache();
+    // MCP servers have no CLI flags, so MODFORGE_OFFLINE (any non-empty value)
+    // is the only way an operator can pin this process to its warm cache.
+    const env = process.env.MODFORGE_OFFLINE;
+    this.cache = opts.cache ?? new FetchCache(env !== undefined && env !== '' ? { offline: true } : {});
   }
 
   /** Parsed client-jar API surface of one game version (downloaded + cached once). */

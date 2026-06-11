@@ -47,16 +47,21 @@ import { planGradleMigration, applyGradleMigration } from '../scan/gradle.ts';
 import { findMixinConfigs, scanMixinSource, collectTargetChecks, checkTargetsAgainstJar, type MixinClassScan } from '../scan/mixin.ts';
 import { bridgeEraHint, type BridgeEra } from './bridge-era.ts';
 import { decideNamespace, probeNamespaces, sampleClassNames } from './bridge-namespace.ts';
-import { checkUnknownFlags } from './flags.ts';
+import { checkUnknownFlags, resolveOffline } from './flags.ts';
 
 const USAGE = `modforge — deterministic cross-version migration engine for Minecraft mods
 
 USAGE
-  modforge bridge --from <ver> --to <ver> [--namespace named|source] <src-dir> [--json] [--out <file>] [--apply]
-  modforge delta --from <ver> --to <ver> [--json] [--out <file>]
+  modforge bridge --from <ver> --to <ver> [--namespace named|source] <src-dir> [--json] [--out <file>] [--apply] [--offline]
+  modforge delta --from <ver> --to <ver> [--json] [--out <file>] [--offline]
   modforge gradle-migrate <project-dir> [--apply]
-  modforge mixin-check --target <ver> <src-dir>
-  modforge versions
+  modforge mixin-check --target <ver> <src-dir> [--offline]
+  modforge versions [--offline]
+
+--offline (or a non-empty MODFORGE_OFFLINE env var) serves only verified cache
+entries and never touches the network — ideal once a version's artifacts are
+warm-cached. A cache miss then fails with the missing artifact named, instead of
+hanging on or refetching an unreachable host.
 
 The honesty taxonomy: every finding is EXACT (deterministically proven against
 the target jar — safe to act on), CANDIDATE (evidenced suggestion — verify), or
@@ -80,7 +85,7 @@ function parseArgs(argv: string[]): Args {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith('--')) {
         // boolean-style flags that never take values
-        if (name === 'json' || name === 'apply' || name === 'no-color') {
+        if (name === 'json' || name === 'apply' || name === 'no-color' || name === 'offline') {
           flags.set(name, true);
         } else {
           flags.set(name, next);
@@ -106,6 +111,15 @@ function fail(msg: string, code: number): never {
 function str(flags: Map<string, string | boolean>, name: string): string | null {
   const v = flags.get(name);
   return typeof v === 'string' ? v : null;
+}
+
+/**
+ * Offline mode for this run: the `--offline` flag OR a non-empty `MODFORGE_OFFLINE`
+ * env var. Passed to every FetchCache so a warm-cache user can run with no network
+ * (and a cold-cache miss fails honestly instead of hanging on an unreachable host).
+ */
+function offlineFor(args: Args): boolean {
+  return resolveOffline(args.flags.get('offline'), process.env.MODFORGE_OFFLINE);
 }
 
 /** Build the full bridge engine for a (from,to) pair via the verified cache. */
@@ -163,7 +177,7 @@ async function cmdBridge(args: Args): Promise<void> {
     fail(`source directory not found: ${dir}`, 1);
   }
 
-  const cache = new FetchCache();
+  const cache = new FetchCache({ offline: offlineFor(args) });
   let bridge: EraBridge;
   try {
     bridge = await buildBridge(cache, from, to);
@@ -334,7 +348,7 @@ async function cmdDelta(args: Args): Promise<void> {
   const from = str(args.flags, 'from') ?? fail('--from <version> is required', 2);
   const to = str(args.flags, 'to') ?? fail('--to <version> is required', 2);
   const out = str(args.flags, 'out');
-  const cache = new FetchCache();
+  const cache = new FetchCache({ offline: offlineFor(args) });
   console.error(`modforge: fetching ${from} + ${to} client jars...`);
   const a = await cache.getClientJar(from);
   const b = await cache.getClientJar(to);
@@ -428,7 +442,7 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
 async function cmdMixinCheck(args: Args): Promise<void> {
   const targetVersion = str(args.flags, 'target') ?? fail('--target <version> is required', 2);
   const dir = args.positional[0] ?? fail('a source directory is required', 2);
-  const cache = new FetchCache();
+  const cache = new FetchCache({ offline: offlineFor(args) });
   const jar = await cache.getClientJar(targetVersion);
   const { api: target } = extractJarApi(jar.data, `${targetVersion}-client`);
 
@@ -488,8 +502,8 @@ function collectMixinClassScans(dir: string): MixinClassScan[] {
   return scans;
 }
 
-async function cmdVersions(): Promise<void> {
-  const cache = new FetchCache();
+async function cmdVersions(args: Args): Promise<void> {
+  const cache = new FetchCache({ offline: offlineFor(args) });
   const v = await cache.resolveVersions();
   console.log(`latest release:  ${v.latestRelease}`);
   console.log(`latest snapshot: ${v.latestSnapshot}`);
@@ -521,7 +535,7 @@ try {
       await cmdMixinCheck(args);
       break;
     case 'versions':
-      await cmdVersions();
+      await cmdVersions(args);
       break;
     case undefined:
     case 'help':

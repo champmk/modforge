@@ -13,8 +13,7 @@
  * Mirrors the bridge-era.ts / bridge-namespace.ts pure-module pattern.
  *
  * ADDING A FLAG: add its bare name (no `--`) to that command's array below.
- * Nothing else — this is the single obvious place. (Note for the queued --offline
- * item: append 'offline' to the `bridge` array and you are done.)
+ * Nothing else — this is the single obvious place.
  */
 import { suggest } from '../core/levenshtein.ts';
 
@@ -29,11 +28,11 @@ export const GLOBAL_FLAGS: readonly string[] = ['help'];
  * registry exists to close.
  */
 export const COMMAND_FLAGS: Record<string, readonly string[]> = {
-  bridge: ['from', 'to', 'namespace', 'apply', 'json', 'out', 'no-color'],
-  delta: ['from', 'to', 'out', 'json'],
+  bridge: ['from', 'to', 'namespace', 'apply', 'json', 'out', 'no-color', 'offline'],
+  delta: ['from', 'to', 'out', 'json', 'offline'],
   'gradle-migrate': ['apply'],
-  'mixin-check': ['target'],
-  versions: [],
+  'mixin-check': ['target', 'offline'],
+  versions: ['offline'],
 };
 
 /**
@@ -67,4 +66,16 @@ export function checkUnknownFlags(cmd: string, flagNames: Iterable<string>): str
     return `unknown flag --${name} for '${cmd}'${valid === '' ? '' : ` — valid flags: ${valid}`}`;
   }
   return null;
+}
+
+/**
+ * Whether offline mode is requested. The `--offline` flag and a non-empty
+ * `MODFORGE_OFFLINE` env var each enable it on their own — either suffices and
+ * neither overrides the other. An unset or empty env var is online; any non-empty
+ * value (even '0') is offline, matching the documented "any non-empty value" rule.
+ * `flag` is `true` when the boolean flag is present; a stray string value counts too.
+ */
+export function resolveOffline(flag: string | boolean | undefined, env: string | undefined): boolean {
+  if (flag === true || (typeof flag === 'string' && flag !== '')) return true;
+  return env !== undefined && env !== '';
 }
