@@ -282,21 +282,13 @@ export class EraBridge {
         pgMember = found;
       }
     } else {
-      // source namespace: member is already in mojmap's source names
-      const matches = pg.cls.members.filter(
-        (m) => m.kind === kind && m.sourceName === oldName && (oldDesc === null || m.descSource === oldDesc),
-      );
-      if (matches.length > 1) {
-        return {
-          from,
-          confidence: 'UNRESOLVED',
-          reason: `Ambiguous: ${matches.length} overloads of ${oldName} match (descriptor needed to disambiguate).`,
-          chain,
-        };
-      }
-      if (matches.length === 1) {
-        pgMember = matches[0]!;
-      } else {
+      // source namespace: member is already in mojmap's source names. Apply the
+      // SAME disambiguation rigor the named path uses — filter by descriptor when
+      // one is given, else by callsite arity (counting descriptor params) when one
+      // is given — so a name-only join can never certify an overload the callsite
+      // contradicts. Remainder ≠ 1 ⇒ honest UNRESOLVED, never a guessed EXACT.
+      const byName = pg.cls.members.filter((m) => m.kind === kind && m.sourceName === oldName);
+      if (byName.length === 0) {
         const inh = this.tryInherited(
           ns,
           from,
@@ -306,10 +298,17 @@ export class EraBridge {
           kind,
           oldName,
           oldDesc,
+          argCount,
         );
         if ('resolution' in inh) return inh.resolution;
         pgMember = inh.pgMember;
         inheritedFrom = inh.inheritedFrom;
+      } else {
+        const picked = disambiguateSourceMembers(byName, kind, pg.cls.sourceBinary, oldName, oldDesc, argCount);
+        if (!('member' in picked)) {
+          return { from, confidence: 'UNRESOLVED', reason: picked.reason, chain };
+        }
+        pgMember = picked.member;
       }
     }
 
@@ -506,7 +505,7 @@ export class EraBridge {
     const inh =
       ns === 'named'
         ? this.findInheritedNamed(obfOwner, kind, oldName, oldDesc, argCount)
-        : this.findInheritedSource(obfOwner, kind, oldName, oldDesc);
+        : this.findInheritedSource(obfOwner, kind, oldName, oldDesc, argCount);
     if ('pgMember' in inh) {
       chain.push(
         `old-hierarchy: ${oldName} not declared on ${from.owner}; inherited from ${inh.declaredOn} ` +
@@ -620,13 +619,18 @@ export class EraBridge {
 
   /**
    * Old-hierarchy walk in the `source` namespace: mojmap members are looked up
-   * directly per obf supertype (NeoForge mods are already in source names).
+   * directly per obf supertype (NeoForge mods are already in source names). The
+   * same descriptor/arity disambiguation as the owner-class path runs at every
+   * supertype, so an inherited overload is never certified by name alone — a
+   * tie stops the walk honestly; a near-miss (name present, descriptor/arity
+   * unmatched) keeps walking, in case the real declarer sits higher up.
    */
   private findInheritedSource(
     obfOwner: string,
     kind: 'method' | 'field',
     sourceName: string,
     sourceDesc: string | null,
+    argCount: number | null = null,
   ): InheritedLookup {
     let walked = 0;
     const nearMisses: string[] = [];
@@ -634,21 +638,16 @@ export class EraBridge {
       walked++;
       const pgSuper = this.mojmap.byObf.get(obfSuper);
       if (!pgSuper) continue; // supertype outside MC mappings — not a bridgeable declarer
-      const matches = pgSuper.members.filter(
-        (m) => m.kind === kind && m.sourceName === sourceName && (sourceDesc === null || m.descSource === sourceDesc),
-      );
-      if (matches.length === 1) {
-        return { pgMember: matches[0]!, declaredOn: pgSuper.sourceBinary, notes: [], walked };
+      const byName = pgSuper.members.filter((m) => m.kind === kind && m.sourceName === sourceName);
+      if (byName.length === 0) continue; // not declared here — keep walking
+      const picked = disambiguateSourceMembers(byName, kind, pgSuper.sourceBinary, sourceName, sourceDesc, argCount);
+      if ('member' in picked) {
+        return { pgMember: picked.member, declaredOn: pgSuper.sourceBinary, notes: [], walked };
       }
-      if (matches.length > 1) {
-        return {
-          unresolved: `Ambiguous on old supertype ${pgSuper.sourceBinary}: ${matches.length} overloads of ${sourceName} match (descriptor needed to disambiguate).`,
-          walked,
-        };
+      if (picked.ambiguous) {
+        return { unresolved: `On old supertype ${pgSuper.sourceBinary}: ${picked.reason}`, walked };
       }
-      if (sourceDesc !== null && pgSuper.members.some((m) => m.kind === kind && m.sourceName === sourceName)) {
-        nearMisses.push(pgSuper.sourceBinary);
-      }
+      nearMisses.push(pgSuper.sourceBinary); // name present, descriptor/arity unmatched — keep walking
     }
     return { walked, nearMisses };
   }
@@ -924,6 +923,69 @@ export function countDescriptorArgs(desc: string): number {
     count++;
   }
   return count;
+}
+
+/**
+ * Outcome of disambiguating same-name source-namespace members: the unique
+ * survivor, or an honest failure. `ambiguous` is true when several candidates
+ * survive the filter (a tie — the walk must stop) and false when none do (a
+ * near-miss — an inherited walk may continue looking higher up).
+ */
+type SourceMemberPick = { member: PgMember } | { reason: string; ambiguous: boolean };
+
+/**
+ * Disambiguate same-name source-namespace members the way the named path does:
+ * by exact descriptor when one is given, else by callsite arity (the descriptor
+ * parameter count) when one is given. `byName` must be non-empty and every entry
+ * must share `name`. Never guesses: a tie or an empty remainder is an honest
+ * failure, never a certified pick. Deterministic (pure function of its inputs).
+ */
+function disambiguateSourceMembers(
+  byName: PgMember[],
+  kind: 'method' | 'field',
+  ownerSource: string,
+  name: string,
+  oldDesc: string | null,
+  argCount: number | null,
+): SourceMemberPick {
+  if (oldDesc !== null) {
+    const byDesc = byName.filter((m) => m.descSource === oldDesc);
+    if (byDesc.length === 1) return { member: byDesc[0]! };
+    if (byDesc.length > 1) {
+      return {
+        reason: `${byDesc.length} members ${name}${oldDesc} on ${ownerSource} share a descriptor — duplicated or corrupt mappings.`,
+        ambiguous: true,
+      };
+    }
+    const have = byName.map((m) => m.descSource).sort().join(', ');
+    return {
+      reason: `Descriptor ${oldDesc} matches no declaration of ${name} on ${ownerSource} [${have}] — not picking a different overload.`,
+      ambiguous: false,
+    };
+  }
+  if (kind === 'method' && argCount !== null) {
+    const byArity = byName.filter((m) => countDescriptorArgs(m.descSource) === argCount);
+    if (byArity.length === 1) return { member: byArity[0]! };
+    if (byArity.length > 1) {
+      return {
+        reason:
+          `${byArity.length} overloads of ${name} on ${ownerSource} take ${argCount} parameter(s); ` +
+          `callsite arity alone cannot disambiguate (descriptor needed).`,
+        ambiguous: true,
+      };
+    }
+    return {
+      reason:
+        `No overload of ${name} on ${ownerSource} takes ${argCount} parameter(s) (callsite arity); ` +
+        `${byName.length} declared with other arities — varargs or mis-counted arity, not guessing.`,
+      ambiguous: false,
+    };
+  }
+  if (byName.length === 1) return { member: byName[0]! };
+  return {
+    reason: `Ambiguous: ${byName.length} overloads of ${name} on ${ownerSource} match by name (descriptor or callsite arity needed to disambiguate).`,
+    ambiguous: true,
+  };
 }
 
 /** total order on strings (avoids locale-dependent localeCompare — determinism). */

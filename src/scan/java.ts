@@ -391,6 +391,12 @@ interface GenericsParse {
   end: number;
   /** Dotted type chains inside the list (annotation names excluded). */
   chains: { text: string; off: number }[];
+  /**
+   * True iff a comma was consumed at the OUTERMOST angle level. Such a comma is
+   * an argument separator if the run is actually a comparison pair (`a < b, c > d`)
+   * rather than generics — the signal countCallArgs needs to refuse a wrong count.
+   */
+  sawTopComma: boolean;
 }
 
 /**
@@ -409,6 +415,7 @@ function tryParseGenerics(toks: Tok[], open: number): GenericsParse | null {
   let i = open + 1;
   let cur: { text: string; off: number } | null = null;
   let afterAt = false;
+  let sawTopComma = false;
   const endChain = (): void => {
     if (cur) chains.push(cur);
     cur = null;
@@ -443,9 +450,12 @@ function tryParseGenerics(toks: Tok[], open: number): GenericsParse | null {
       case '>':
         depth--;
         endChain();
-        if (depth === 0) return { end: i + 1, chains };
+        if (depth === 0) return { end: i + 1, chains, sawTopComma };
         break;
       case ',':
+        if (depth === 1) sawTopComma = true;
+        endChain();
+        break;
       case '?':
       case '[':
       case ']':
@@ -489,9 +499,22 @@ function countCallArgs(toks: Tok[], open: number): number | null {
       } else if (t.text === '<' && depth >= 1 && toks[i - 1]?.kind === 'ident') {
         const g = tryParseGenerics(toks, i);
         if (g) {
-          any = true;
-          i = g.end;
-          continue;
+          // A type-shaped run after `ident<` is only a REAL generic instantiation
+          // in expression position when it is immediately applied — `new T<…>(` or
+          // a method reference `T<…>::`. Otherwise an `ident < … >` run is a
+          // comparison chain. When that run also swallowed a top-level comma, the
+          // shape is genuinely ambiguous (`a < b, c > d` is two comparisons OR one
+          // generic arg) — refuse a wrong count and report uncountable.
+          const after = toks[g.end];
+          const applied = after?.text === '(' || after?.text === '::';
+          if (applied) {
+            any = true;
+            i = g.end;
+            continue;
+          }
+          if (g.sawTopComma) return null;
+          // No swallowed separator: treating `<` as an operator can't change the
+          // count, so fall through and let the normal walk continue.
         }
       }
       if (depth === 1 && t.text !== '(' && t.text !== ')') any = true;
