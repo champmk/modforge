@@ -1,12 +1,17 @@
 /**
- * gradle-migrate --apply must treat its own .modforge-backup as off-limits.
+ * gradle-migrate --apply must treat ModForge's own backup dirs as off-limits.
  *
- * Confirmed P0 (findings 05 + 18): the cmdGradleMigrate directory walk does not
- * exclude '.modforge-backup', so a second --apply re-descends into the backup,
- * migrates the pristine originals in place, nests a new .modforge-backup, and
- * reports a nonzero "files rewritten" count even though zero PROJECT files
- * changed. The applyToDisk containment guard has the matching hole: it only
- * refuses a backup dir that is the FIRST path segment, not one nested deeper.
+ * Confirmed P0 (findings 05 + 18) + P1-7 (finding 46): backups now live under
+ * '<root>/.modforge/backup/' — nested in a dot-dir so `gradlew build` never
+ * compiles a backed-up file. The cmdGradleMigrate directory walk must exclude
+ * '.modforge' (and still exclude the legacy '.modforge-backup'), so a second
+ * --apply never re-descends into the backup, migrates the pristine originals in
+ * place, nor reports a nonzero "files rewritten" count when zero PROJECT files
+ * changed. The applyToDisk containment guard refuses a backup-dir segment at
+ * ANY depth, for both the current and the legacy dir name.
+ *
+ * Old backups are never migrated: when a legacy '.modforge-backup' is present,
+ * --apply prints one informational line and leaves it untouched.
  *
  * Expectations are hand-derived from the synthetic fabric project built below;
  * byte equality is checked on raw Buffers (readFileSync without an encoding).
@@ -59,17 +64,18 @@ function runApply(dir: string): { stdout: string; stderr: string; status: number
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
 
+/** Backup path of a project file under the new nested dot-dir layout. */
 function backup(dir: string, name: string): string {
-  return join(dir, '.modforge-backup', name);
+  return join(dir, '.modforge', 'backup', name);
 }
 
-test('one --apply leaves .modforge-backup byte-identical to the pristine originals', () => {
+test('one --apply leaves .modforge/backup byte-identical to the pristine originals', () => {
   const { dir, pristine } = makeProject();
   try {
     runApply(dir);
     for (const name of ['build.gradle', 'gradle.properties']) {
       const path = backup(dir, name);
-      assert.ok(existsSync(path), `backup ${name} should exist after one --apply`);
+      assert.ok(existsSync(path), `backup ${name} should exist under .modforge/backup after one --apply`);
       assert.ok(
         readFileSync(path).equals(pristine.get(name)!),
         `backup ${name} must equal the pristine original after one --apply`,
@@ -80,7 +86,7 @@ test('one --apply leaves .modforge-backup byte-identical to the pristine origina
   }
 });
 
-test('two --apply runs keep .modforge-backup pristine and create no nested backup', () => {
+test('two --apply runs keep .modforge/backup pristine and create no nested backup', () => {
   const { dir, pristine } = makeProject();
   try {
     runApply(dir);
@@ -91,9 +97,10 @@ test('two --apply runs keep .modforge-backup pristine and create no nested backu
         `backup ${name} must STILL equal the pristine original after a second --apply`,
       );
     }
+    // A re-run must not descend into .modforge and back up the backup.
     assert.ok(
-      !existsSync(join(dir, '.modforge-backup', '.modforge-backup')),
-      'a re-run must not nest .modforge-backup inside .modforge-backup',
+      !existsSync(join(dir, '.modforge', 'backup', '.modforge')),
+      'a re-run must not nest a backup of the backup under .modforge/backup',
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -117,7 +124,31 @@ test('the second --apply truthfully reports 0 files rewritten', () => {
   }
 });
 
-test('applyToDisk refuses a target inside a NESTED .modforge-backup before touching it', () => {
+test('applyToDisk refuses a target inside a NESTED .modforge/backup before touching it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'modforge-contain-'));
+  try {
+    const relDir = join('sub', '.modforge', 'backup');
+    mkdirSync(join(root, relDir), { recursive: true });
+    const target = join(root, relDir, 'X.java');
+    const content = 'class X {}';
+    writeFileSync(target, content, 'utf8');
+    const before = readFileSync(target);
+
+    // 'X' is the single-char token at offset 6 of "class X {}".
+    const op: PatchOp = { file: 'sub/.modforge/backup/X.java', start: 6, end: 7, before: 'X', after: 'Y', findingId: 'unit' };
+
+    assert.throws(
+      () => applyToDisk([op], { root }),
+      /backup directory/,
+      'a path with a .modforge segment anywhere must be refused',
+    );
+    assert.ok(readFileSync(target).equals(before), 'the file must be untouched (refused before any write)');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('applyToDisk still refuses a target inside a NESTED legacy .modforge-backup', () => {
   const root = mkdtempSync(join(tmpdir(), 'modforge-contain-'));
   try {
     const relDir = join('sub', '.modforge-backup');
@@ -127,16 +158,61 @@ test('applyToDisk refuses a target inside a NESTED .modforge-backup before touch
     writeFileSync(target, content, 'utf8');
     const before = readFileSync(target);
 
-    // 'X' is the single-char token at offset 6 of "class X {}".
     const op: PatchOp = { file: 'sub/.modforge-backup/X.java', start: 6, end: 7, before: 'X', after: 'Y', findingId: 'unit' };
 
     assert.throws(
       () => applyToDisk([op], { root }),
       /backup directory/,
-      'a path with a .modforge-backup segment anywhere must be refused',
+      'a path with a legacy .modforge-backup segment anywhere must be refused',
     );
     assert.ok(readFileSync(target).equals(before), 'the file must be untouched (refused before any write)');
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gradle-migrate does not descend into a .modforge dir (a pre-existing backup is left untouched)', () => {
+  const { dir } = makeProject();
+  try {
+    // A pretend ModForge backup of build.gradle, already migrate-able on its face.
+    const innerDir = join(dir, '.modforge', 'backup');
+    mkdirSync(innerDir, { recursive: true });
+    const inner = join(innerDir, 'build.gradle');
+    writeFileSync(inner, BUILD_GRADLE, 'utf8');
+    const innerPristine = readFileSync(inner);
+
+    const r = runApply(dir);
+    assert.equal(r.status, 0, `gradle-migrate must exit 0; stderr:\n${r.stderr}`);
+
+    // The real project file migrated (sanity), proving the walk ran...
+    assert.ok(
+      readFileSync(join(dir, 'build.gradle'), 'utf8').includes('net.fabricmc.fabric-loom'),
+      'the top-level build.gradle must still be migrated',
+    );
+    // ...but the file inside .modforge was never read or rewritten.
+    assert.ok(
+      readFileSync(inner).equals(innerPristine),
+      'a build.gradle inside .modforge must be left byte-for-byte unchanged (walk skipped the dir)',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('gradle-migrate prints one informational line when a legacy .modforge-backup is present', () => {
+  const { dir } = makeProject();
+  try {
+    // A leftover pre-0.1.2 backup dir. It must NOT be migrated, just acknowledged.
+    mkdirSync(join(dir, '.modforge-backup'), { recursive: true });
+
+    const r = runApply(dir);
+    assert.equal(r.status, 0, `gradle-migrate must exit 0; stderr:\n${r.stderr}`);
+    assert.match(
+      r.stderr,
+      /legacy backups/i,
+      `--apply must note the legacy backup dir once; stderr was:\n${r.stderr}`,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

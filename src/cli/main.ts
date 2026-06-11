@@ -27,7 +27,7 @@ import { buildRenameTable, surfaceFromMojmap } from '../bridge/renames.ts';
 import { computeDelta } from '../delta/delta.ts';
 import { renderDeltaMarkdown } from '../report/delta-md.ts';
 import { scanTree, type JavaFinding } from '../scan/java.ts';
-import { planJavaPatches, applyToDisk, type PatchOp } from '../patch/patch.ts';
+import { planJavaPatches, applyToDisk, BACKUP_DIR, BACKUP_SUBDIR, LEGACY_BACKUP_DIR, type PatchOp } from '../patch/patch.ts';
 import { adaptForPatching, type PatchInput } from '../patch/wire.ts';
 import type { AppliedFix } from '../report/report.ts';
 import {
@@ -287,7 +287,7 @@ async function cmdBridge(args: Args): Promise<void> {
     console.error(
       `modforge: applied ${totalApplied} EXACT rewrite(s) across ${writtenFiles.size} file(s); ` +
         `${review.leftForReview} finding(s) left for review (CANDIDATE/UNRESOLVED or EXACT not provably patchable here).` +
-        (writtenFiles.size > 0 ? ` Originals backed up under ${join(dir, '.modforge-backup')}.` : ''),
+        (writtenFiles.size > 0 ? ` Originals backed up under ${join(dir, BACKUP_DIR, BACKUP_SUBDIR)}.` : ''),
     );
   }
 
@@ -368,7 +368,7 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) {
-        if (!['build', '.gradle', '.git', 'node_modules', 'run', '.modforge-backup'].includes(e.name)) walk(p);
+        if (!['build', '.gradle', '.git', 'node_modules', 'run', BACKUP_DIR, LEGACY_BACKUP_DIR].includes(e.name)) walk(p);
       } else if (wanted.has(e.name) || e.name.endsWith('.mixins.json') || e.name.endsWith('.accesswidener')) {
         const norm = p.replace(/\\/g, '/');
         const buf = readFileSync(p);
@@ -388,14 +388,22 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
   const plan = planGradleMigration(files);
   console.log(JSON.stringify(summarizeGradlePlan(plan), null, 2));
   if (args.flags.get('apply')) {
+    // Old backups are never migrated: if a pre-0.1.2 .modforge-backup is still
+    // here, say so once and leave it untouched — new backups go to .modforge/backup.
+    if (existsSync(join(dir, LEGACY_BACKUP_DIR))) {
+      console.error(
+        `modforge: note: legacy backups remain under ${join(dir, LEGACY_BACKUP_DIR)}; ` +
+          `new backups go to ${join(dir, BACKUP_DIR, BACKUP_SUBDIR)} (the old ones are left untouched).`,
+      );
+    }
     const originals = new Map(files.map((f) => [f.path, f.text]));
     let written = 0;
     for (const f of applyGradleMigration(plan)) {
       if (originals.get(f.path) !== f.text) {
         // Same safety contract as bridge --apply: original backed up under
-        // .modforge-backup/ before writing (first-run copy preserved).
+        // .modforge/backup/ before writing (first-run copy preserved).
         const rel = relative(dir, f.path) || f.path;
-        const backupPath = join(dir, '.modforge-backup', rel);
+        const backupPath = join(dir, BACKUP_DIR, BACKUP_SUBDIR, rel);
         // Raw byte copy of the ORIGINAL file, taken before the rewrite below —
         // never a writeFileSync of the decoded string (that would mojibake any
         // multibyte content). First-run copy preserved across re-runs.
@@ -408,7 +416,7 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
       }
     }
     console.error(
-      `modforge: ${written} files rewritten (EXACT-tier rules only; originals backed up under ${join(dir, '.modforge-backup')}). ` +
+      `modforge: ${written} files rewritten (EXACT-tier rules only; originals backed up under ${join(dir, BACKUP_DIR, BACKUP_SUBDIR)}). ` +
         'Review the manual-review list above.',
     );
   } else {
@@ -469,7 +477,7 @@ function collectMixinClassScans(dir: string): MixinClassScan[] {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const p = join(d, e.name);
       if (e.isDirectory()) {
-        if (!['build', '.gradle', '.git', 'node_modules', 'run', 'out', '.modforge-backup'].includes(e.name)) walk(p);
+        if (!['build', '.gradle', '.git', 'node_modules', 'run', 'out', BACKUP_DIR, LEGACY_BACKUP_DIR].includes(e.name)) walk(p);
       } else if (e.name.endsWith('.java')) {
         scans.push(...scanMixinSource(readFileSync(p, 'utf8'), p.replaceAll('\\', '/')));
       }

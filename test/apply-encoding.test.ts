@@ -64,7 +64,7 @@ test('applyToDisk refuses a non-UTF-8 file whole: no write, no backup, offset na
     assert.ok(reason.includes(String(e9Offset)), `refusal reason must name byte offset ${e9Offset}; got: ${reason}`);
 
     assert.ok(readFileSync(abs).equals(before), 'on-disk bytes must be unchanged after a refusal');
-    assert.ok(!existsSync(join(root, BACKUP_DIR, 'Demo.java')), 'a refused file must not be backed up');
+    assert.ok(!existsSync(join(root, BACKUP_DIR, 'backup', 'Demo.java')), 'a refused file must not be backed up');
     assert.equal(outcome!.backupPath, undefined, 'no backup path on a refused file');
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -156,7 +156,7 @@ test('gradle-migrate excludes a non-UTF-8 gradle.properties but migrates valid f
     // the valid file still migrates, with a byte-identical backup of the pristine original
     const migrated = readFileSync(join(dir, 'build.gradle'), 'utf8');
     assert.ok(migrated.includes('net.fabricmc.fabric-loom'), 'build.gradle (valid ASCII) must be migrated');
-    const backup = join(dir, BACKUP_DIR, 'build.gradle');
+    const backup = join(dir, BACKUP_DIR, 'backup', 'build.gradle');
     assert.ok(existsSync(backup), 'build.gradle backup must exist');
     assert.ok(readFileSync(backup).equals(buildPristine), 'build.gradle backup must equal the pristine original bytes');
   } finally {
@@ -176,7 +176,7 @@ test('gradle-migrate backs up a valid multibyte gradle.properties with raw-byte 
     const r = runApply(dir);
     assert.equal(r.status, 0, `gradle-migrate must exit 0; stderr:\n${r.stderr}`);
 
-    const backup = join(dir, BACKUP_DIR, 'gradle.properties');
+    const backup = join(dir, BACKUP_DIR, 'backup', 'gradle.properties');
     assert.ok(existsSync(backup), `a migrated gradle.properties must be backed up; stderr:\n${r.stderr}`);
     assert.ok(
       readFileSync(backup).equals(gpPristine),

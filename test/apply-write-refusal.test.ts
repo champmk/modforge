@@ -71,7 +71,7 @@ test('applyToDisk: a read-only target is refused per-file; the rest of the batch
     assert.match(reason, /could not be written/i, 'refusal reason must say the file could not be written');
     assert.match(reason, /EPERM|EACCES|EROFS|EBUSY/, `refusal reason must include the OS error; got: ${reason}`);
     assert.ok(readFileSync(lockedAbs).equals(lockedBefore), 'a refused read-only file must be byte-unchanged');
-    assert.ok(!existsSync(join(root, BACKUP_DIR, 'MMM.java')), 'a never-modified file must not be left with a backup');
+    assert.ok(!existsSync(join(root, BACKUP_DIR, 'backup', 'MMM.java')), 'a never-modified file must not be left with a backup');
 
     // AAA and ZZZ: still written (the batch continued past the failure).
     for (const f of ['AAA.java', 'ZZZ.java']) {
@@ -79,7 +79,7 @@ test('applyToDisk: a read-only target is refused per-file; the rest of the batch
       assert.equal(o.written, true, `${f} must still be written after the read-only file failed`);
       assert.equal(o.refused.length, 0, `${f} must not be refused`);
       assert.ok(readFileSync(join(root, f), 'utf8').includes('class NewName {}'), `${f} rewritten on disk`);
-      assert.ok(existsSync(join(root, BACKUP_DIR, f)), `${f} written → backup exists`);
+      assert.ok(existsSync(join(root, BACKUP_DIR, 'backup', f)), `${f} written → backup exists`);
     }
   } finally {
     try {

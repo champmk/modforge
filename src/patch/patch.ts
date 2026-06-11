@@ -19,7 +19,7 @@
  *   is empty.
  * - Dry-run is the default everywhere: planning and applyPatches are pure;
  *   only `applyToDisk` touches the filesystem, and it backs originals up to
- *   `.modforge-backup/<relpath>` first.
+ *   `.modforge/backup/<relpath>` first.
  *
  * Scope: Java source findings (imports, FQN occurrences, import-bound simple
  * names, lexically-certain member callsites). Build/config files are handled
@@ -749,15 +749,34 @@ export function planJavaPatches(fileText: string, fileName: string, findings: Re
 // Disk application (the ONLY effectful entry point)
 // ---------------------------------------------------------------------------
 
-/** Backup directory name, created under `root`. */
-export const BACKUP_DIR = '.modforge-backup';
+/**
+ * ModForge's per-project dot-dir, created under `root`. Originals are copied to
+ * `<root>/.modforge/backup/<relpath>` before patching — NESTED under this
+ * dot-dir on purpose: `gradlew build` (and IDEs) compile every `.java` file
+ * found under the source root, so a backup kept as a bare `.java` sibling would
+ * be compiled as a duplicate class and break the very next build. A dot-dir is
+ * excluded from the source set, so the safety net and the build coexist.
+ */
+export const BACKUP_DIR = '.modforge';
+
+/** Subdirectory of {@link BACKUP_DIR} the raw-byte originals mirror into. */
+export const BACKUP_SUBDIR = 'backup';
+
+/**
+ * Pre-0.1.2 backup dir (a bare `.modforge-backup/` at the source root, which
+ * Gradle DID compile). Still skipped by tree walks and refused by the
+ * containment guard so an old tree that already has one is never re-scanned or
+ * patched; new backups go to `<root>/.modforge/backup/`. Legacy backups are
+ * left in place, never migrated.
+ */
+export const LEGACY_BACKUP_DIR = '.modforge-backup';
 
 export interface ApplyToDiskOptions {
-  /** Create `.modforge-backup/<relpath>` copies before writing. Default TRUE. */
+  /** Create `<root>/.modforge/backup/<relpath>` copies before writing. Default TRUE. */
   backup?: boolean;
   /**
    * Project root: relative op paths resolve against it and backups mirror the
-   * tree under `<root>/.modforge-backup/`. Default `process.cwd()`.
+   * tree under `<root>/.modforge/backup/`. Default `process.cwd()`.
    */
   root?: string;
 }
@@ -787,8 +806,9 @@ function errMsg(e: unknown): string {
  * that writes; everything upstream is a dry run.
  *
  * Safety properties:
- * - Every target must resolve INSIDE `root` (and outside the backup dir) —
- *   violations throw before ANY file is touched.
+ * - Every target must resolve INSIDE `root` (and outside any ModForge backup
+ *   dir — current `.modforge` or legacy `.modforge-backup`) — violations throw
+ *   before ANY file is touched.
  * - Per file: ops are re-verified against the live on-disk text via
  *   `applyPatches`; any mismatch refuses the whole file (reported in the
  *   outcome, file untouched).
@@ -798,7 +818,7 @@ function errMsg(e: unknown): string {
  *   rolled back, and the batch continues. A failing file is honest output, not
  *   an operational failure.
  * - Backups (default on): the original is copied to
- *   `<root>/.modforge-backup/<relpath>` BEFORE writing. An existing backup is
+ *   `<root>/.modforge/backup/<relpath>` BEFORE writing. An existing backup is
  *   never overwritten — it stays the pre-ModForge original across re-runs.
  * - Files are processed in sorted-path order; outcomes are deterministic given
  *   identical disk state.
@@ -833,8 +853,9 @@ export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): File
     if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`applyToDisk: '${file}' resolves to '${abs}', outside root '${root}' — refusing to patch anything (set opts.root to a directory containing every target)`);
     }
-    if (normPath(rel).split('/').includes(BACKUP_DIR)) {
-      throw new Error(`applyToDisk: '${file}' lies inside the backup directory — refusing to patch anything`);
+    const segs = normPath(rel).split('/');
+    if (segs.includes(BACKUP_DIR) || segs.includes(LEGACY_BACKUP_DIR)) {
+      throw new Error(`applyToDisk: '${file}' lies inside a ModForge backup directory — refusing to patch anything`);
     }
     resolved.set(file, { abs, rel });
   }
@@ -894,7 +915,7 @@ export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): File
     try {
       let backupPath: string | undefined;
       if (backup) {
-        backupPath = join(root, BACKUP_DIR, rel);
+        backupPath = join(root, BACKUP_DIR, BACKUP_SUBDIR, rel);
         mkdirSync(dirname(backupPath), { recursive: true });
         // Keep the FIRST backup: it is the pre-ModForge original; re-runs must not clobber it.
         if (!existsSync(backupPath)) {

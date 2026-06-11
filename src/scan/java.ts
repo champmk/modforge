@@ -1220,7 +1220,7 @@ export function scanJavaSource(text: string, fileName: string): JavaScanResult {
 
 /** Directories never descended into (build outputs, VCS, backups). */
 const SKIP_DIRS = new Set([
-  'node_modules', '.git', '.gradle', 'build', 'out', 'bin', 'target', '.idea', '.modforge-backup', 'dist',
+  'node_modules', '.git', '.gradle', 'build', 'out', 'bin', 'target', '.idea', '.modforge', '.modforge-backup', 'dist',
 ]);
 
 /**

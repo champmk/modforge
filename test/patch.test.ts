@@ -403,7 +403,10 @@ test('applyToDisk writes patches, backs up originals once, and is re-run safe', 
     const patched = readFileSync(join(root, rel), 'utf8');
     assert.ok(patched.includes('import net.minecraft.util.Identifier;'));
     const backupPath = outcomes[0]!.backupPath!;
-    assert.ok(backupPath.includes(BACKUP_DIR));
+    assert.ok(
+      backupPath.includes(join(BACKUP_DIR, 'backup')),
+      `backup must live under ${join(BACKUP_DIR, 'backup')}/ (nested in a dot-dir so gradle never compiles it); got ${backupPath}`,
+    );
     assert.equal(readFileSync(backupPath, 'utf8'), SRC); // original preserved
 
     // Re-run with the same (now stale) ops: whole file refused, nothing changes.
