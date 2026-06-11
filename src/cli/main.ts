@@ -31,18 +31,21 @@ import { planJavaPatches, applyToDisk, type PatchOp } from '../patch/patch.ts';
 import { adaptForPatching, type PatchInput } from '../patch/wire.ts';
 import type { AppliedFix } from '../report/report.ts';
 import {
+  annotateApply,
   colorEnabled,
   makeFinding,
   makeReport,
   renderJson,
   renderMarkdown,
   renderTerminal,
+  summarizeApply,
   summarizeDelta,
   summarizeGradlePlan,
   type Finding,
 } from '../report/report.ts';
 import { planGradleMigration, applyGradleMigration } from '../scan/gradle.ts';
 import { findMixinConfigs, scanMixinSource, collectTargetChecks, checkTargetsAgainstJar, type MixinClassScan } from '../scan/mixin.ts';
+import { bridgeEraHint, type BridgeEra } from './bridge-era.ts';
 
 const USAGE = `modforge — deterministic cross-version migration engine for Minecraft mods
 
@@ -125,6 +128,23 @@ async function buildBridge(cache: FetchCache, from: string, to: string): Promise
   return new EraBridge({ yarn, intermediary, mojmap, target, oldHierarchy, renames });
 }
 
+/**
+ * Era of a version from ground truth (its Mojang version JSON): a published
+ * client_mappings download means the obfuscated era (a valid bridge source);
+ * no mappings + Java 25+ is the unobfuscated 26.1+ era. Any fetch/shape failure
+ * degrades to 'unknown' so a network hiccup never turns into a wrong hint.
+ */
+async function classifyEra(cache: FetchCache, version: string): Promise<BridgeEra> {
+  try {
+    const { json } = await cache.getVersionJson(version);
+    if (json.downloads.client_mappings) return 'pre';
+    if ((json.javaVersion?.majorVersion ?? 0) >= 25) return 'post';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function cmdBridge(args: Args): Promise<void> {
   const from = str(args.flags, 'from') ?? fail('--from <version> is required', 2);
   const to = str(args.flags, 'to') ?? fail('--to <version> is required', 2);
@@ -142,11 +162,15 @@ async function cmdBridge(args: Args): Promise<void> {
   try {
     bridge = await buildBridge(cache, from, to);
   } catch (e) {
-    // The most common usage mistake: --from/--to reversed (new era as the
-    // source). Detectable because the bridge needs the FROM version's
-    // mappings, which only exist for the old era.
+    // A missing FROM mojmap is era-shaped: either the args are reversed (a
+    // post-era FROM that belongs in the TO slot) or BOTH versions are post-era
+    // (no obfuscation boundary to bridge at all — the bug a circular reversed
+    // hint used to paper over). Classify the pair from ground truth and let the
+    // pure decider pick the honest message; never suggest a command that would
+    // fail identically.
     if (e instanceof ArtifactUnavailableError && e.code === 'NO_MOJANG_MAPPINGS') {
-      fail(`${e.message}\n\nDid you mean:  modforge bridge --from ${to} --to ${from} ${dir}`, 1);
+      const [fromEra, toEra] = await Promise.all([classifyEra(cache, from), classifyEra(cache, to)]);
+      fail(bridgeEraHint({ from, to, dir, baseMessage: e.message, fromEra, toEra }), 1);
     }
     throw e;
   }
