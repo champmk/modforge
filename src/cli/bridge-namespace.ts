@@ -60,12 +60,11 @@ export const MIN_SAMPLE = 3;
  *  little under EITHER namespace and must not trigger a confident flip). */
 export const WIN_FLOOR_RATE = 0.25;
 
-/** The default `named` is abandoned only when its OWN hit-rate is essentially
- *  zero; a tree where `named` also maps a real share is yarn, not mojmap. */
-export const NAMED_DEAD_RATE = 0.1;
-
-/** The winner must out-map the loser by this factor — "6029 vs 6" is lopsided; a
- *  near-even split means a mixed/ambiguous tree the user should choose for. */
+/** `named` proceeds SILENTLY only when it out-maps `source` by this factor.
+ *  Modern yarn aligned many class names with mojmap, so a mojmap tree can show
+ *  a substantial named hit-rate from the overlap alone — silence therefore
+ *  requires decisive dominance, never a bare rate floor. Anything closer gets
+ *  a notice naming both counts and both flags. */
 export const DOMINANCE_RATIO = 4;
 
 /**
@@ -99,10 +98,17 @@ export function probeNamespaces(
 
 /**
  * Decide the namespace from the probe counts. Outcomes:
- *   - lopsided `source` win → flip the default and announce it loudly (the bug fix);
- *   - `named` maps a real share → it works, proceed silently (the common Fabric case);
- *   - anything else (both near zero, mixed, too small) → keep the default but name
- *     BOTH flags so a misrouted user can recover.
+ *   - `source` maps a real share AND strictly out-maps `named` → flip the default
+ *     and announce it loudly with both counts (a wrong pick here mints wrong EXACT
+ *     certificates for the overlap classes whose two namespaces resolve to
+ *     DIFFERENT targets — silence is never acceptable on contested evidence);
+ *   - `named` maps a real share and decisively dominates → proceed silently (the
+ *     common Fabric case);
+ *   - `named` maps a real share but `source` is materially close → keep the
+ *     default, but say so with both counts (yarn↔mojmap name overlap makes this
+ *     reachable from a real mojmap tree — the user must be able to catch it);
+ *   - anything else (both near zero, too small) → keep the default and name both
+ *     flags so a misrouted user can recover.
  * Pure function of its input — same counts always yield the same decision.
  */
 export function decideNamespace(probe: NamespaceProbe): NamespaceDecision {
@@ -115,29 +121,37 @@ export function decideNamespace(probe: NamespaceProbe): NamespaceDecision {
   const namedRate = namedHits / sampled;
   const sourceRate = sourceHits / sampled;
 
-  // Lopsided `source` win → autodetect: flip the default and say so on one line.
-  if (
-    sampled >= MIN_SAMPLE &&
-    namedRate < NAMED_DEAD_RATE &&
-    sourceRate >= WIN_FLOOR_RATE &&
-    sourceHits >= DOMINANCE_RATIO * Math.max(namedHits, 1)
-  ) {
+  // `source` maps a real share and strictly out-maps `named` → autodetect.
+  if (sampled >= MIN_SAMPLE && sourceRate >= WIN_FLOOR_RATE && sourceHits > namedHits) {
     return {
       namespace: 'source',
       autodetected: true,
       notice:
         `modforge: namespace autodetected: source (mojmap names) — ` +
-        `${sourceHits}/${sampled} scanned classes matched (pass --namespace named to override)`,
+        `${sourceHits}/${sampled} scanned classes matched vs ${namedHits}/${sampled} under named ` +
+        `(pass --namespace named to override)`,
     };
   }
 
-  // The default `named` maps a real share → it works; proceed without noise.
-  if (namedRate >= WIN_FLOOR_RATE) {
+  // `named` works AND decisively dominates → the confident Fabric case; silent.
+  if (namedRate >= WIN_FLOOR_RATE && namedHits >= DOMINANCE_RATIO * Math.max(sourceHits, 1)) {
     return { namespace: 'named', autodetected: false, notice: null };
   }
 
-  // Ambiguous: `named` is weak and `source` did not lopsidedly win — keep the
-  // default but name BOTH flags so a misrouted user can recover.
+  // `named` works but `source` is materially close (name-overlap territory) —
+  // proceed on the default, but show both counts and the recovery flag.
+  if (namedRate >= WIN_FLOOR_RATE) {
+    return {
+      namespace: 'named',
+      autodetected: false,
+      notice:
+        `modforge: using namespace 'named' (yarn/Fabric, default) — ${namedHits}/${sampled} scanned classes ` +
+        `matched, but ${sourceHits}/${sampled} also match mojmap names; if this is a NeoForge/mojmap mod, ` +
+        `re-run with --namespace source.`,
+    };
+  }
+
+  // Both weak / sample too small — keep the default but name BOTH flags.
   return {
     namespace: 'named',
     autodetected: false,

@@ -225,3 +225,14 @@ test('countCallArgs: f(this.<A,B>g(x)) → 1 (this-qualified multi-arg witness)'
 test('countCallArgs: f(obj.<A,B>g(x), y) → 2 (witness skipped, real separator counted)', () => {
   assert.equal(argCountOf('f(obj.<A,B>g(x), y)', 'f'), 2);
 });
+
+// A BARE `ident<…>(…)` is never a generic invocation in Java (witnesses need a
+// dot-qualifier, instantiation needs `new`) — so this is two comparisons whose
+// swallowed comma makes the count honestly uncountable, never 1.
+test('countCallArgs: f(a < b, c > (d)) → null (bare ident<…>( is comparisons, not generics)', () => {
+  assert.equal(argCountOf('f(a < b, c > (d))', 'f'), undefined);
+});
+
+test('countCallArgs: f(new T<A, B>(x)) → 1 (real instantiation still trusted)', () => {
+  assert.equal(argCountOf('f(new T<A, B>(x))', 'f'), 1);
+});

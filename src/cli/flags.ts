@@ -22,17 +22,18 @@ export const GLOBAL_FLAGS: readonly string[] = ['help'];
 
 /**
  * Per-command accepted flags, enumerated from each cmd* reader in main.ts and the
- * USAGE block. A flag is listed under a command only where that command actually
- * reads it — so `--json` / `--no-color` are NOT blanket-global: as no-ops on a
- * command that ignores them they would be exactly the silent-typo bug this
- * registry exists to close.
+ * USAGE block. `--json` is NOT blanket-global (a silent no-op on a command that
+ * ignores it is exactly the typo bug this registry closes), but `--no-color` IS
+ * accepted everywhere: it expresses "plain output", which a command whose output
+ * is already plain trivially satisfies — honoring it is correct, and rejecting
+ * it contradicts the documented NO_COLOR convention.
  */
 export const COMMAND_FLAGS: Record<string, readonly string[]> = {
   bridge: ['from', 'to', 'namespace', 'apply', 'json', 'out', 'no-color', 'offline'],
-  delta: ['from', 'to', 'out', 'json', 'offline'],
-  'gradle-migrate': ['apply'],
-  'mixin-check': ['target', 'offline'],
-  versions: ['offline'],
+  delta: ['from', 'to', 'out', 'json', 'no-color', 'offline'],
+  'gradle-migrate': ['apply', 'no-color'],
+  'mixin-check': ['target', 'no-color', 'offline'],
+  versions: ['no-color', 'offline'],
 };
 
 /**

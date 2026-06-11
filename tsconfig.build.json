@@ -4,7 +4,11 @@
     "noEmit": false,
     "outDir": "dist",
     "rootDir": "src",
-    "declaration": true
+    // No declarations: the package's surface is two bins, and the .d.ts emit
+    // keeps the sources' `.ts` import specifiers (rewriteRelativeImportExtensions
+    // rewrites only the JS), so every shipped declaration was broken-by-default
+    // for TypeScript deep-importers. Ship working JS, not broken types.
+    "declaration": false
   },
   "include": ["src/**/*.ts"]
 }

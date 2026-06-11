@@ -508,14 +508,19 @@ function countCallArgs(toks: Tok[], open: number): number | null {
       } else if (t.text === '<' && depth >= 1 && toks[i - 1]?.kind === 'ident') {
         const g = tryParseGenerics(toks, i);
         if (g) {
-          // A type-shaped run after `ident<` is only a REAL generic instantiation
-          // in expression position when it is immediately applied — `new T<…>(` or
-          // a method reference `T<…>::`. Otherwise an `ident < … >` run is a
-          // comparison chain. When that run also swallowed a top-level comma, the
-          // shape is genuinely ambiguous (`a < b, c > d` is two comparisons OR one
-          // generic arg) — refuse a wrong count and report uncountable.
+          // A type-shaped run after `ident<` is only a REAL generic use in
+          // expression position when (a) the chain is an instantiation —
+          // `new T<…>(` — or (b) it heads a method reference `T<…>::`. A BARE
+          // `ident<…>(…)` is never a generic invocation in Java (witnesses need
+          // a dot-qualifier, handled above), so `f(a < b, c > (d))` is two
+          // comparison expressions, not generics-applied-to-(d). When a
+          // non-generic run swallowed a top-level comma the count is genuinely
+          // ambiguous — refuse a wrong count and report uncountable.
           const after = toks[g.end];
-          const applied = after?.text === '(' || after?.text === '::';
+          let chainStart = i - 1;
+          while (toks[chainStart - 1]?.text === '.' && toks[chainStart - 2]?.kind === 'ident') chainStart -= 2;
+          const isNew = toks[chainStart - 1]?.kind === 'kw' && toks[chainStart - 1]?.text === 'new';
+          const applied = (after?.text === '(' && isNew) || after?.text === '::';
           if (applied) {
             any = true;
             i = g.end;

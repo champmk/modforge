@@ -309,7 +309,7 @@ async function cmdBridge(args: Args): Promise<void> {
   const report = makeReport(
     // Provenance relative to the working dir when possible — shareable reports
     // should not carry the machine's user paths.
-    { tool: 'modforge', version: '0.1.1', fromVersion: from, toVersion: to, namespace: ns, generatedFor: relative(process.cwd(), dir) || dir },
+    { tool: 'modforge', version: '0.1.2', fromVersion: from, toVersion: to, namespace: ns, generatedFor: relative(process.cwd(), dir) || dir },
     findings,
   );
 
@@ -413,25 +413,34 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
     }
     const originals = new Map(files.map((f) => [f.path, f.text]));
     let written = 0;
+    let refusedWrites = 0;
     for (const f of applyGradleMigration(plan)) {
       if (originals.get(f.path) !== f.text) {
         // Same safety contract as bridge --apply: original backed up under
-        // .modforge/backup/ before writing (first-run copy preserved).
+        // .modforge/backup/ before writing (first-run copy preserved), and a
+        // write failure (read-only/locked file) is a per-file refusal that the
+        // batch survives — never a mid-batch crash with files already written.
         const rel = relative(dir, f.path) || f.path;
         const backupPath = join(dir, BACKUP_DIR, BACKUP_SUBDIR, rel);
-        // Raw byte copy of the ORIGINAL file, taken before the rewrite below —
-        // never a writeFileSync of the decoded string (that would mojibake any
-        // multibyte content). First-run copy preserved across re-runs.
-        if (!existsSync(backupPath)) {
-          mkdirSync(dirname(backupPath), { recursive: true });
-          copyFileSync(f.path, backupPath);
+        try {
+          // Raw byte copy of the ORIGINAL file, taken before the rewrite below —
+          // never a writeFileSync of the decoded string (that would mojibake any
+          // multibyte content). First-run copy preserved across re-runs.
+          if (!existsSync(backupPath)) {
+            mkdirSync(dirname(backupPath), { recursive: true });
+            copyFileSync(f.path, backupPath);
+          }
+          writeFileSync(f.path, f.text);
+          written++;
+        } catch (e) {
+          refusedWrites++;
+          console.error(`modforge: refused ${rel}: file could not be written (${e instanceof Error ? e.message : String(e)}) — left unchanged; fix the permission or lock and re-run.`);
         }
-        writeFileSync(f.path, f.text);
-        written++;
       }
     }
     console.error(
-      `modforge: ${written} files rewritten (EXACT-tier rules only; originals backed up under ${join(dir, BACKUP_DIR, BACKUP_SUBDIR)}). ` +
+      `modforge: ${written} files rewritten${refusedWrites > 0 ? `, ${refusedWrites} refused (see above)` : ''} ` +
+        `(EXACT-tier rules only; originals backed up under ${join(dir, BACKUP_DIR, BACKUP_SUBDIR)}). ` +
         'Review the manual-review list above.',
     );
   } else {
@@ -442,6 +451,13 @@ async function cmdGradleMigrate(args: Args): Promise<void> {
 async function cmdMixinCheck(args: Args): Promise<void> {
   const targetVersion = str(args.flags, 'target') ?? fail('--target <version> is required', 2);
   const dir = args.positional[0] ?? fail('a source directory is required', 2);
+  // Validate the cheap local input before the expensive jar download — and fail
+  // with one line, not a raw ENOENT stack trace from deep inside the walk.
+  try {
+    statSync(dir);
+  } catch {
+    fail(`source directory not found: ${dir}`, 1);
+  }
   const cache = new FetchCache({ offline: offlineFor(args) });
   const jar = await cache.getClientJar(targetVersion);
   const { api: target } = extractJarApi(jar.data, `${targetVersion}-client`);
@@ -482,6 +498,12 @@ async function cmdMixinCheck(args: Args): Promise<void> {
     }
   }
   console.log(`\nmixin-check vs ${targetVersion}: ${present} present, ${absent} ABSENT (break on this version), ${info} not verifiable (outside Minecraft), ${unparseable} unparseable`);
+  if (absent > 0) {
+    console.log(
+      `note: ABSENT means "not under this name in ${targetVersion}". If this mod is written in pre-26.x yarn names, ` +
+        `most class misses are renames, not removals — run: modforge bridge --from <your version> --to ${targetVersion} <dir>`,
+    );
+  }
   console.log(`note: this is signature-level verification; instruction-level @At verification ships next (a signature can match while the targeted instruction is gone).`);
 }
 

@@ -13,15 +13,17 @@ cd modforge
 npm test
 ```
 
-There is no install step. ModForge has zero runtime dependencies and zero
-dev dependencies; Node 24 runs the TypeScript sources natively via type
-stripping. If `npm test` passes, you are ready to work.
+There is no install step for development. ModForge has zero runtime
+dependencies; Node 24 runs the TypeScript sources natively via type stripping.
+If `npm test` passes, you are ready to work. (The two devDependencies —
+`typescript` and `@types/node` — exist only so installs can build `dist/`;
+they never ship in the package.)
 
 ## Code style
 
 - Strict TypeScript. Typechecking needs the compiler and Node's types
-  (`npm install --no-save typescript @types/node`, then `npx tsc --noEmit`
-  must be clean). This is the one tooling download; it never ships.
+  (`npm install`, then `npx tsc --noEmit` must be clean). Build tooling only;
+  it never ships.
 - ESM only, with explicit `.ts` extensions in imports
   (`import { x } from "./y.ts"`).
 - **No runtime dependencies. This is a hard rule, not a preference.**

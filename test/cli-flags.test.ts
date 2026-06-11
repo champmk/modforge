@@ -51,10 +51,10 @@ test('suggest: returns the nearest flag within a small edit distance, else undef
 
 test('registry: the documented commands and their flags', () => {
   assert.deepEqual(COMMAND_FLAGS['bridge'], ['from', 'to', 'namespace', 'apply', 'json', 'out', 'no-color', 'offline']);
-  assert.deepEqual(COMMAND_FLAGS['delta'], ['from', 'to', 'out', 'json', 'offline']);
-  assert.deepEqual(COMMAND_FLAGS['gradle-migrate'], ['apply']);
-  assert.deepEqual(COMMAND_FLAGS['mixin-check'], ['target', 'offline']);
-  assert.deepEqual(COMMAND_FLAGS['versions'], ['offline']);
+  assert.deepEqual(COMMAND_FLAGS['delta'], ['from', 'to', 'out', 'json', 'no-color', 'offline']);
+  assert.deepEqual(COMMAND_FLAGS['gradle-migrate'], ['apply', 'no-color']);
+  assert.deepEqual(COMMAND_FLAGS['mixin-check'], ['target', 'no-color', 'offline']);
+  assert.deepEqual(COMMAND_FLAGS['versions'], ['no-color', 'offline']);
   // --offline (P1-10) is accepted exactly on the commands that build a FetchCache...
   for (const cmd of ['bridge', 'delta', 'mixin-check', 'versions']) {
     assert.ok(COMMAND_FLAGS[cmd]!.includes('offline'), `--offline must be a flag on ${cmd}`);
@@ -74,7 +74,7 @@ test('every documented flag (and the global flags) is accepted on its command', 
 });
 
 test('knownFlagsFor: command set ∪ globals, or null for an unregistered command', () => {
-  assert.deepEqual(knownFlagsFor('gradle-migrate'), ['apply', ...GLOBAL_FLAGS]);
+  assert.deepEqual(knownFlagsFor('gradle-migrate'), ['apply', 'no-color', ...GLOBAL_FLAGS]);
   assert.equal(knownFlagsFor('not-a-command'), null, 'unknown command has no registry (dispatcher handles it)');
 });
 
@@ -96,17 +96,19 @@ test('a typo\'d flag is rejected with a did-you-mean', () => {
 test('an unknown flag with no close match lists the valid flags instead', () => {
   const m = checkUnknownFlags('mixin-check', ['frobnicate']);
   assert.match(String(m), /unknown flag --frobnicate for 'mixin-check'/);
-  assert.match(String(m), /valid flags: --target, --offline, --help/, 'names every accepted flag when no suggestion fits');
+  assert.match(String(m), /valid flags: --target, --no-color, --offline, --help/, 'names every accepted flag when no suggestion fits');
   assert.doesNotMatch(String(m), /did you mean/, 'no spurious suggestion for a far-off flag');
 });
 
-test('json/no-color are NOT blanket-global — only valid where the command reads them', () => {
-  // delta renders without color; --no-color there is a silent no-op today (the bug).
-  assert.match(String(checkUnknownFlags('delta', ['no-color'])), /unknown flag --no-color for 'delta'/);
-  // versions reads no flags; --json there is a silent no-op today (the bug).
+test('--json is NOT blanket-global; --no-color is accepted everywhere', () => {
+  // versions/gradle-migrate emit text only; --json there is a silent no-op (the typo bug).
   assert.match(String(checkUnknownFlags('versions', ['json'])), /unknown flag --json for 'versions'/);
-  // but they ARE accepted where real
-  assert.equal(checkUnknownFlags('bridge', ['no-color']), null);
+  assert.match(String(checkUnknownFlags('gradle-migrate', ['json'])), /unknown flag --json for 'gradle-migrate'/);
+  // --no-color expresses "plain output"; an already-plain command satisfies it,
+  // so every command accepts it (the docs promise it, and NO_COLOR is global).
+  for (const cmd of ['bridge', 'delta', 'gradle-migrate', 'mixin-check', 'versions']) {
+    assert.equal(checkUnknownFlags(cmd, ['no-color']), null, `--no-color must be accepted on ${cmd}`);
+  }
   assert.equal(checkUnknownFlags('bridge', ['json']), null);
   assert.equal(checkUnknownFlags('delta', ['json']), null);
 });

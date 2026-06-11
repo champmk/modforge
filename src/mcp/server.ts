@@ -43,7 +43,7 @@ import { toBinaryName } from '../core/model.ts';
 import { suggest } from '../core/levenshtein.ts';
 
 const SERVER_NAME = 'modforge-mcp';
-const SERVER_VERSION = '0.1.1';
+const SERVER_VERSION = '0.1.2';
 
 /** Protocol revisions this server speaks (the tools subset is identical in all). */
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -535,8 +535,17 @@ export function toolFailureText(e: unknown): string {
     if (e.code === 'UNKNOWN_VERSION') {
       // The library message coaches toward extraManifestUrls — a FetchCache
       // constructor option with no equivalent on the MCP surface. Drop that
-      // clause and name the tool that actually lists valid ids.
-      const factual = e.message.replace(/\s*[^.]*extraManifestUrls[^.]*\.\s*/g, ' ').trim();
+      // sentence by index arithmetic, NOT a regex: the message embeds the
+      // caller-controlled version id verbatim, and a backtracking pattern over
+      // attacker-sized input is a synchronous event-loop stall.
+      let factual = e.message;
+      const at = factual.indexOf('extraManifestUrls');
+      if (at !== -1) {
+        const start = factual.lastIndexOf('.', at) + 1;
+        const endDot = factual.indexOf('.', at);
+        const end = endDot === -1 ? factual.length : endDot + 1;
+        factual = (factual.slice(0, start) + ' ' + factual.slice(end)).replace(/[ \t]{2,}/g, ' ').trim();
+      }
       return `[${e.code}] ${factual} Call modforge_versions to list valid version ids.`;
     }
     return `[${e.code}] ${e.message}`;

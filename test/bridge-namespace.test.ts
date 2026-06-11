@@ -23,7 +23,6 @@ import {
   probeNamespaces,
   sampleClassNames,
   MIN_SAMPLE,
-  NAMED_DEAD_RATE,
   type SourceNamespace,
 } from '../src/cli/bridge-namespace.ts';
 
@@ -45,7 +44,7 @@ test('lopsided source (mojmap tree) → autodetect source, loud overridable line
 
 test('lithium-shaped lopsidedness (a few cross-namespace coincidences) still flips to source', () => {
   // 6 named "hits" are the cross-namespace coincidences observed on the real mod;
-  // 6 < 0.1*200 = 20, and 185 >= 4*max(6,1) = 24, so the flip still fires.
+  // sourceRate 0.925 >= 0.25 and 185 > 6, so the flip fires.
   const d = decideNamespace({ namedHits: 6, sourceHits: 185, sampled: 200 });
   assert.equal(d.namespace, 'source');
   assert.equal(d.autodetected, true);
@@ -59,13 +58,36 @@ test('lopsided named (Fabric tree) → keep default, stay silent', () => {
   assert.equal(d.notice, null, 'a working default must not nag');
 });
 
-test('both namespaces map a lot (mixed) → default named works, stay silent', () => {
-  // source does not lopsidedly dominate (140 < 4*150) and named maps a real share,
-  // so the safe default is the working one — no noise.
+test('both namespaces map a lot (contested) → keep named but SAY SO with both counts', () => {
+  // named wins on count (150 > 140) so no flip — but 140/200 also matching mojmap
+  // is exactly the name-overlap territory where a silent default minted a wrong
+  // EXACT certificate. Contested evidence must never be silent.
   const d = decideNamespace({ namedHits: 150, sourceHits: 140, sampled: 200 });
   assert.equal(d.namespace, 'named');
   assert.equal(d.autodetected, false);
-  assert.equal(d.notice, null);
+  assert.ok(d.notice, 'contested evidence must not be silent');
+  assert.match(d.notice!, /150\/200/);
+  assert.match(d.notice!, /140\/200/);
+  assert.match(d.notice!, /--namespace source/);
+});
+
+test('the misroute attack: source strictly out-maps named → flip, never silent-named', () => {
+  // The confirmed P0 repro: a real mojmap/NeoForge tree where yarn↔mojmap name
+  // overlap gave named 4/10 — the old rule kept named SILENTLY and --apply then
+  // rewrote DedicatedServer to ServerInterface. source 10 > named 4 must flip.
+  const d = decideNamespace({ namedHits: 4, sourceHits: 10, sampled: 10 });
+  assert.equal(d.namespace, 'source');
+  assert.equal(d.autodetected, true);
+  assert.match(d.notice!, /10\/10 scanned classes matched/);
+  assert.match(d.notice!, /4\/10 under named/);
+});
+
+test('an exact tie never flips — named kept, both counts shown', () => {
+  const d = decideNamespace({ namedHits: 10, sourceHits: 10, sampled: 20 });
+  assert.equal(d.namespace, 'named');
+  assert.equal(d.autodetected, false);
+  assert.ok(d.notice, 'a tie is contested evidence');
+  assert.match(d.notice!, /--namespace source/);
 });
 
 test('ambiguous / both near zero → keep default, name BOTH flags', () => {
@@ -87,13 +109,13 @@ test('tiny sample, all source → too small to trust, keep default + hint', () =
   assert.match(d.notice!, /--namespace source/);
 });
 
-test('boundary: named hit-rate exactly at the dead threshold does NOT flip', () => {
-  // namedRate === NAMED_DEAD_RATE is not < NAMED_DEAD_RATE → conservative: no flip.
-  const sampled = 200;
-  const namedHits = Math.round(NAMED_DEAD_RATE * sampled); // 20
-  const d = decideNamespace({ namedHits, sourceHits: 180, sampled });
+test('source below the working floor never flips, even when it out-counts named', () => {
+  // 2/200 source vs 0/200 named: source "wins" the count but maps nothing real —
+  // WIN_FLOOR_RATE blocks a confident flip on a tree with no usable signal.
+  const d = decideNamespace({ namedHits: 0, sourceHits: 2, sampled: 200 });
   assert.equal(d.namespace, 'named');
   assert.equal(d.autodetected, false);
+  assert.match(d.notice!, /--namespace source/);
 });
 
 test('empty sample → quiet default, no namespace noise', () => {

@@ -20,7 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -213,6 +213,36 @@ test('gradle-migrate prints one informational line when a legacy .modforge-backu
       `--apply must note the legacy backup dir once; stderr was:\n${r.stderr}`,
     );
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a read-only file is refused per-file; the batch survives and counts stay truthful', () => {
+  const { dir, pristine } = makeProject();
+  const buildPath = join(dir, 'build.gradle');
+  try {
+    chmodSync(buildPath, 0o444);
+    // Probe: if this platform/user does not enforce read-only, skip honestly.
+    let enforced = true;
+    try {
+      writeFileSync(buildPath, readFileSync(buildPath));
+      enforced = false;
+    } catch {
+      /* enforced — the attack is reachable */
+    }
+    if (!enforced) return; // nothing to test on this platform
+
+    const r = runApply(dir);
+    assert.equal(r.status, 0, `a refused write is honest output, not an operational failure; stderr:\n${r.stderr}`);
+    assert.match(r.stderr, /refused build\.gradle: file could not be written/, 'the refusal names the file and the cause');
+    assert.ok(readFileSync(buildPath).equals(pristine.get('build.gradle')!), 'the read-only file is byte-untouched');
+    assert.ok(
+      !readFileSync(join(dir, 'gradle.properties')).equals(pristine.get('gradle.properties')!),
+      'the writable file in the same batch is still migrated',
+    );
+    assert.match(r.stderr, /1 files rewritten, 1 refused/, 'the summary counts both truthfully');
+  } finally {
+    try { chmodSync(buildPath, 0o666); } catch { /* best effort for cleanup */ }
     rmSync(dir, { recursive: true, force: true });
   }
 });
