@@ -40,6 +40,7 @@ import type { SourceNamespace } from '../bridge/bridge.ts';
 import type { ApiDelta, MemberChange, RenameCandidate } from '../delta/delta.ts';
 import { ArtifactUnavailableError, FetchError } from '../mappings/fetch.ts';
 import { toBinaryName } from '../core/model.ts';
+import { suggest } from '../core/levenshtein.ts';
 
 const SERVER_NAME = 'modforge-mcp';
 const SERVER_VERSION = '0.1.1';
@@ -462,6 +463,68 @@ function toolDescriptor(t: ToolDef): Record<string, unknown> {
   return { name: t.name, title: t.title, description: t.description, inputSchema: t.inputSchema };
 }
 
+// ---------------------------------------------------------------------------
+// Argument-key validation (enforce the schema's additionalProperties:false)
+// ---------------------------------------------------------------------------
+//
+// Every tool's inputSchema declares additionalProperties:false, but most MCP
+// hosts pass model-generated arguments through unvalidated — so the server is the
+// only enforcement point. Without this, a typo'd key ('descriptor' for 'desc',
+// 'extraManifestUrls', a misspelled key inside a batched symbols[] item) was
+// silently dropped and the call ran with defaults, turning a known symbol into a
+// false UNRESOLVED. The repo's own contract (engine.ts) classifies garbage input
+// as a tool FAILURE, never UNRESOLVED. The schema is the single source of truth
+// here — allowed keys are read straight off it, never duplicated.
+
+/** Throw on the first key not in `allowed`, naming it (+ a did-you-mean / the valid keys). */
+function rejectUnknownKeys(keys: Iterable<string>, allowed: readonly string[], where: string): void {
+  const allowedSet = new Set(allowed);
+  for (const k of keys) {
+    if (allowedSet.has(k)) continue;
+    const near = suggest(k, allowed);
+    const hint = near !== undefined ? ` — did you mean '${near}'?` : '';
+    throw new ToolInputError(`${where}: unknown key '${k}'${hint} (allowed: ${allowed.join(', ')})`);
+  }
+}
+
+/**
+ * Recursively enforce additionalProperties:false against a JSON-schema node:
+ * reject undeclared keys on the object, then descend into declared object
+ * properties and array-of-object items (so a nested item schema — e.g. each
+ * bridge_report symbols[] entry — is enforced and located too).
+ */
+function assertKeysAgainstSchema(value: unknown, schema: Record<string, unknown>, where: string): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return;
+  const props = (schema['properties'] as Record<string, unknown> | undefined) ?? {};
+  if (schema['additionalProperties'] === false) {
+    rejectUnknownKeys(Object.keys(value as Args), Object.keys(props), where);
+  }
+  for (const [key, sub] of Object.entries(props)) {
+    if (typeof sub !== 'object' || sub === null) continue;
+    const subSchema = sub as Record<string, unknown>;
+    const child = (value as Args)[key];
+    if (subSchema['type'] === 'object') {
+      assertKeysAgainstSchema(child, subSchema, key);
+    } else if (subSchema['type'] === 'array' && Array.isArray(child)) {
+      const items = subSchema['items'];
+      if (typeof items === 'object' && items !== null) {
+        child.forEach((el, i) => assertKeysAgainstSchema(el, items as Record<string, unknown>, `${key}[${i}]`));
+      }
+    }
+  }
+}
+
+/**
+ * Reject any argument key not declared in the named tool's inputSchema (a
+ * ToolInputError → the standard isError tool-result). A no-op for an unknown tool
+ * name — the dispatcher already errors on that. Exported for direct unit testing.
+ */
+export function assertKnownArgKeys(toolName: string, args: Args): void {
+  const tool = TOOL_BY_NAME.get(toolName);
+  if (!tool) return;
+  assertKeysAgainstSchema(args, tool.inputSchema, 'arguments');
+}
+
 /**
  * Map a tool failure to honest, actionable text. Only genuine failures land here
  * — UNRESOLVED resolutions are success payloads and never reach this path.
@@ -556,6 +619,7 @@ async function handleToolCall(id: RequestId, params: unknown): Promise<void> {
     return;
   }
   try {
+    assertKnownArgKeys(name, rawArgs as Args);
     const structured = await tool.handler(rawArgs as Args);
     replyResult(id, {
       // Spec: structured results SHOULD also carry the serialized JSON as text.

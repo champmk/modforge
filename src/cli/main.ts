@@ -47,6 +47,7 @@ import { planGradleMigration, applyGradleMigration } from '../scan/gradle.ts';
 import { findMixinConfigs, scanMixinSource, collectTargetChecks, checkTargetsAgainstJar, type MixinClassScan } from '../scan/mixin.ts';
 import { bridgeEraHint, type BridgeEra } from './bridge-era.ts';
 import { decideNamespace, probeNamespaces, sampleClassNames } from './bridge-namespace.ts';
+import { checkUnknownFlags } from './flags.ts';
 
 const USAGE = `modforge — deterministic cross-version migration engine for Minecraft mods
 
@@ -498,6 +499,13 @@ async function cmdVersions(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(process.argv.slice(2));
+// Reject a typo'd/unknown flag BEFORE dispatch (a usage error, exit 2) so it can
+// never be silently ignored and run with defaults. Unknown commands and the
+// help/usage paths carry no registry and fall through to the switch below.
+if (args.cmd !== undefined) {
+  const flagError = checkUnknownFlags(args.cmd, args.flags.keys());
+  if (flagError) fail(flagError, 2);
+}
 try {
   switch (args.cmd) {
     case 'bridge':
