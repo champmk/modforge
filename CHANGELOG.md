@@ -18,9 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hint. Explicit flags are always respected.
 - `docs/AGENT-PLAYBOOK.md`: wiring the MCP server into an agent's porting loop
   within a context budget.
-
 - `modforge bridge --apply`: writes EXACT rewrites to disk — span-verified,
-  all-or-nothing per file, originals backed up under `.modforge-backup/`,
+  all-or-nothing per file, originals backed up under `.modforge/backup/`,
   iterates to a fixpoint (a rewrite held back by a name collision applies once
   the colliding name is renamed away), and is idempotent. CANDIDATE and
   UNRESOLVED findings are never touched.
@@ -161,5 +160,6 @@ Initial release.
   Mojang piston-data, sha1-verified, and cached in `~/.modforge/cache`;
   never redistributed.
 
+[Unreleased]: https://github.com/champmk/modforge/compare/v0.1.1...HEAD
 [0.1.1]: https://github.com/champmk/modforge/releases/tag/v0.1.1
-[0.1.0]: https://github.com/champmk/modforge/releases/tag/v0.1.0
+[0.1.0]: https://www.npmjs.com/package/modforge/v/0.1.0

@@ -34,22 +34,31 @@ cannot rot.
 - **Era Bridge** (`modforge bridge`): any obfuscated-era version with published yarn and
   mojmap artifacts (through 1.21.11) as the source, any unobfuscated 26.x version as the
   target. Source symbols may be yarn-named (`--namespace named`) or mojmap-source
-  (`--namespace source`).
+  (`--namespace source`); when the flag is omitted the bridge probes both lookup tables,
+  announces its pick, and names the override.
 - **API Delta** (`modforge delta`): any pair of versions whose jars are published in
   Mojang's piston-data, including snapshots and pre-releases.
 - **Runtime**: Node >= 24 (native TypeScript execution). No other runtime requirements.
+- **Offline**: `--offline` (or the `MODFORGE_OFFLINE` env var, which the MCP server honors
+  too) serves only verified cache entries; a warm cache needs zero network.
 - **MCP**: the server targets the 2025-11-25 stdio spec revision.
 
 ## Quality gates (run before any release)
 
+Reproducible from any clone:
+
 ```
-npm test                          # 30 tests, must be green
+npm test                          # the full suite, must be green
 npx -p typescript tsc --noEmit    # strict typecheck, must be clean
 ```
 
-In addition, the corpus validation gate must hold: ModForge's EXACT findings are scored
-against real human-written port commits (AppleSkin and friends, pinned commits, fetched at
-test time - never vendored), and EXACT precision must be 100%. Any EXACT the human port
+In addition, the corpus validation gate must hold. This gate is run by the maintainer,
+not by the shipped test suite: the corpus is pinned-commit checkouts of real mods and
+their human-written port commits, which cannot be redistributed, so the scorer and answer
+keys stay out of the repo. ModForge's EXACT findings are scored against what the human
+port actually did, and EXACT precision must be 100%. Scored today: AppleSkin, at class
+level (43 renamed classes in the key; currently 41 EXACT, zero contradictions, 95.3%
+recall). Cloth Config and Lithium are cloned and queued. Any EXACT the human port
 contradicts is a P0.
 
 ## Watchlist (minutes per quarter)

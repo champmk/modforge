@@ -62,9 +62,9 @@ shelling out to javap, or pulling in a bytecode library. The classfile metadata 
 stable and documented.
 
 **Decision.** Parse classfile metadata (constant pool, class/method/field tables,
-descriptors, signatures, the Code attribute for mixin instruction checks) directly in
-TypeScript - majors 45 through 69, all constant-pool tags through Java 25. Unknown tags
-fail loudly rather than desync.
+descriptors, signatures, plus an opt-in Code-attribute scan as groundwork for the planned
+instruction-level mixin checks) directly in TypeScript - majors 45 through 69, all
+constant-pool tags through Java 25. Unknown tags fail loudly rather than desync.
 
 **Consequences.** Zero toolchain dependency for users, works on any classfile version, and
 the parser is version-stable (zero format changes Java 17 -> 25); a future format bump is a
@@ -107,9 +107,10 @@ common-shape penalty, and a mutual-best-match (bijective) constraint in both dir
 Results ship as CANDIDATE with score, evidence, and provenance - never as EXACT, and never
 auto-applied.
 
-**Consequences.** The 100% EXACT-precision gate stays intact, and oracle sources (the
-NeoForge primer, the Fabric API migration map) can seed candidates without ever being
-trusted as ground truth.
+**Consequences.** The 100% EXACT-precision corpus gate (maintainer-run; see
+[MAINTENANCE.md](MAINTENANCE.md)) stays intact, and oracle sources (the NeoForge primer,
+the Fabric API migration map) can seed candidates through the engine's oracle-seed API
+without ever being trusted as ground truth - though no oracle data ships yet.
 
 ## D8: Live version resolution, no hardcoded pins
 

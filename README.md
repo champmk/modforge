@@ -1,8 +1,27 @@
 <img src="https://raw.githubusercontent.com/champmk/modforge/main/assets/banner.svg" alt="ModForge" width="100%">
 
-**The deterministic cross-version migration engine for Minecraft mods.**
+**The deterministic cross-version migration engine for Minecraft mods. It computes every rename from the real mappings and jars — and refuses to guess when the data can't prove one.**
 
 [![CI](https://github.com/champmk/modforge/actions/workflows/ci.yml/badge.svg)](https://github.com/champmk/modforge/actions) [![npm](https://img.shields.io/npm/v/modforge)](https://www.npmjs.com/package/modforge) [![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![node >= 24](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
+
+<img src="https://raw.githubusercontent.com/champmk/modforge/main/assets/demo.gif" alt="ModForge bridging a real Fabric mod (AppleSkin) from 1.21.11 to 26.1.2 — every line is unedited CLI output" width="100%">
+
+*Real output, unedited: a 453-reference Fabric mod bridged and auto-rewritten, with the refusals stated.*
+
+ModForge is built for **Fabric** mods first: point `bridge` at yarn-named source (the
+Fabric default) or at a mojmap-source tree (NeoForge / multiloader) — the bridge
+autodetects which namespace your code is written in and announces its pick, and an
+explicit `--namespace` always wins. (No relation to Minecraft Forge or CurseForge.)
+
+The proof, up front — a real Fabric mod (AppleSkin), bridged 1.21.11 → 26.1.2:
+
+- 453 Minecraft references → **402 resolved EXACT**, every one verified by name and
+  descriptor against the actual 26.1.2 jar, plus 29 evidenced CANDIDATEs and 22 refusals
+  that each state their precise reason.
+- Checked class-by-class against the same mod's actual human-written port commit, the
+  EXACT set contradicted the human port **zero times** — and the check surfaced a hotfix
+  rename (`GuiGraphics → GuiGraphicsExtractor` in 26.1.2) that the merged human port had
+  missed ([how this is scored](#validated-against-reality)).
 
 ModForge computes mod migrations instead of guessing at them: it chains your yarn-era or
 mojmap symbols through the real mapping artifacts, verifies every result against the actual
@@ -33,7 +52,8 @@ AI assistants can ask it for version-truth instead of hallucinating.
 
 ## Quickstart
 
-Requires Node >= 24 (TypeScript runs natively -- no build step).
+Requires Node >= 24. (Installing from a git clone or a `github:` spec works too -- a
+`prepare` script builds `dist/` on install.)
 
 ```bash
 npx modforge versions
@@ -41,39 +61,56 @@ npx modforge bridge --from 1.21.11 --to 26.1.2 path/to/your-mod/src/main/java
 ```
 
 The first run downloads the needed mappings and jars from official sources, sha1-verifies
-them, and caches under `~/.modforge/cache`. Then you get a report like this (excerpt from a
-real run on AppleSkin):
+them, and caches under `~/.modforge/cache`. Once the cache is warm, `--offline` (or the
+`MODFORGE_OFFLINE` env var) guarantees zero network -- a cache miss then fails with one
+line naming the missing artifact. Then you get a report like this (excerpt from a real
+run on AppleSkin):
 
 ```text
-EXACT
-  L5:8 import class net/minecraft/entity/player/PlayerEntity
-    → net/minecraft/world/entity/player/Player
-    reason: Deterministic chain resolved and class exists in 26.1.2-client.
-    · yarn: named net/minecraft/entity/player/PlayerEntity → intermediary net/minecraft/class_1657
-    · intermediary: net/minecraft/class_1657 → official ddm
-    · mojmap: obf ddm → source net/minecraft/world/entity/player/Player
-    · target(26.1.2-client): class present
+modforge migration report — 1.21.11 → 26.1.2 (namespace named, modforge v0.1.1)
+for: path/to/your-mod/src/main/java
 
-CANDIDATE
-  L4:8 import class net/minecraft/client/gui/DrawContext
-    →? net/minecraft/client/gui/GuiGraphicsExtractor (score 0.9)
-    2 inner classes (RenderingTextCollector, ScissorStack) matched bijectively
-    with identical inner names — containment evidence for the outer rename.
-    Structural evidence only — a rename cannot be proven; verify before applying.
-    reason: Chain resolved to net/minecraft/client/gui/GuiGraphics, but that class
-    does not exist in 26.1.2-client — it was removed or renamed after the era
-    boundary. The rename layer supplies a grounded candidate — never auto-applied.
-
-UNRESOLVED
-  L67:37 member-instance method net/minecraft/server/world/ServerWorld#getPlayers
-    reason: yarn has 2 overloads of getPlayers on net/minecraft/server/world/ServerWorld,
-    none with 0 parameters (callsite arity) — varargs or mis-counted arity; not guessing.
-
-453 references — EXACT 402 · CANDIDATE 29 · UNRESOLVED 22
+summary: EXACT 402 · CANDIDATE 29 · UNRESOLVED 22 · total 453
+by kind: class 276/27/2 · method 93/2/20 · field 33/0/0  (EXACT/CANDIDATE/UNRESOLVED)
 note: CANDIDATE items need your judgment; UNRESOLVED items are honest unknowns, not failures.
+
+EXACT (402) — every hop deterministic and verified against the target — safe to auto-apply
+  squeek/appleskin/api/event/FoodValuesEvent.java
+    L5:8 [4dc4531d5b13] import class net/minecraft/entity/player/PlayerEntity
+      → net/minecraft/world/entity/player/Player
+      reason: Deterministic chain resolved and class exists in 26.1.2-client.
+      · yarn: named net/minecraft/entity/player/PlayerEntity → intermediary net/minecraft/class_1657
+      · intermediary: net/minecraft/class_1657 → official ddm
+      · mojmap: obf ddm → source net/minecraft/world/entity/player/Player
+      · target(26.1.2-client): class present
+
+CANDIDATE (29 findings, 2 unique decisions) — grounded evidence with provenance — needs your judgment, never auto-applied
+  class net/minecraft/client/gui/DrawContext
+    →? net/minecraft/client/gui/GuiGraphicsExtractor (score 0.9)
+       2 inner classes (RenderingTextCollector, ScissorStack) matched bijectively with
+       identical inner names — containment evidence for the outer rename. Structural
+       evidence only — a rename cannot be proven; verify before applying.
+    reason: Chain resolved to net/minecraft/client/gui/GuiGraphics, but that class does
+    not exist in 26.1.2-client — it was removed or renamed after the era boundary. The
+    rename layer supplies a grounded candidate — CANDIDATE, never auto-applied.
+    27 sites: squeek/appleskin/api/event/HUDOverlayEvent.java:4:8, … (+17 more)
+
+UNRESOLVED (22) — honest unknowns with reasons — a successful result, not a failure
+  squeek/appleskin/network/SyncHandler.java
+    L67:37 [ef64e9286290] member-instance method net/minecraft/server/world/ServerWorld#getPlayers
+      reason: yarn has 2 overloads of getPlayers on net/minecraft/server/world/ServerWorld,
+      none with 0 parameters (callsite arity) — varargs or mis-counted arity; not guessing.
+
+modforge: summary — EXACT 402 · CANDIDATE 29 (2 unique decisions) · UNRESOLVED 22 · total 453
+modforge: 2 decisions need your judgment — the evidence is above
+modforge: 22 references need a manual port — each lists its precise reason
+modforge: 402 renames are deterministic and jar-verified — modforge bridge ... --apply writes them (originals backed up)
+modforge: tip: --out report.md for a shareable report
 ```
 
-(Excerpt trimmed from a real run; audit-chain lines appear on every finding.)
+(Excerpt from a real run, trimmed: most findings are cut, the CANDIDATE's audit-chain
+lines and most of its 27-site list are elided, and a few long lines are re-wrapped to
+fit. In a real report every finding carries its full audit chain.)
 
 Add `--json` for a stable machine-readable schema, or `--out report.md` for markdown.
 
@@ -81,14 +118,17 @@ Add `--json` for a stable machine-readable schema, or `--out report.md` for mark
 
 | Command | What it does |
 |---|---|
-| `modforge bridge --from <v> --to <v> [--namespace named\|source] <src-dir> [--json] [--out report.md] [--apply]` | Era migration report: resolves every Minecraft reference in your source tree to its target-version name, with audit chains. `--apply` writes the EXACT rewrites to disk (originals backed up under `.modforge-backup/`); CANDIDATE and UNRESOLVED are never touched. |
-| `modforge delta --from <v> --to <v> [--json] [--out delta.md]` | Exact API surface diff between any two game versions -- the "what breaks in 26.2" report, computable the minute a version ships (`--out` writes the publishable markdown). |
-| `modforge gradle-migrate <dir> [--apply]` | Mechanical build-script migration (loom plugin id, mappings block, dependency forms, Java 25); dry-run by default, EXACT-tier rewrites only with `--apply`. |
-| `modforge mixin-check --target <v> <src-dir>` | Verifies `@Mixin` targets and member references against the target version's jar. |
-| `modforge versions` | Shows the latest release/snapshot and the era boundary. |
+| `modforge bridge --from <v> --to <v> [--namespace named\|source] <src-dir> [--json] [--out report.md] [--apply] [--offline]` | Era migration report: resolves every Minecraft reference in your source tree to its target-version name, with audit chains. When `--namespace` is omitted the bridge autodetects yarn (`named`) vs mojmap (`source`) from your code and says which it picked. `--apply` writes the EXACT rewrites to disk (originals backed up under `.modforge/backup/`); CANDIDATE and UNRESOLVED are never touched. |
+| `modforge delta --from <v> --to <v> [--json] [--out delta.md] [--offline]` | Exact API surface diff between any two game versions -- the "what breaks in 26.2" report, computable the minute a version ships (`--out` writes the publishable markdown). |
+| `modforge gradle-migrate <dir> [--apply]` | Build-script migration (loom plugin id, mappings block, dependency forms, Java 25); dry-run by default, EXACT-tier rewrites only with `--apply`. Project-specific version values (loom, loader, fabric-api) are never auto-written -- they are flagged for manual review with an instruction naming exactly what to set. |
+| `modforge mixin-check --target <v> <src-dir> [--offline]` | Verifies `@Mixin` targets and member references against the target version's jar, at signature level: inherited members are found via a deterministic hierarchy walk, and targets outside `net.minecraft`/`com.mojang` (JDK, libraries, your own classes) report as INFO -- "not verifiable", never a false break verdict. |
+| `modforge versions [--offline]` | Shows the latest release/snapshot and the era boundary. |
 
 Every command is CI-friendly: deterministic output, exit 0 on success (UNRESOLVED findings
-are a successful result), exit 2 on usage errors, exit 1 on operational failures.
+are a successful result), exit 2 on usage errors, exit 1 on operational failures. An
+unknown or typo'd flag exits 2 with a did-you-mean instead of being silently ignored.
+ANSI color is emitted only when stdout is a TTY; `NO_COLOR` and `--no-color` are honored,
+so piped output and CI logs stay clean.
 
 ## The honesty taxonomy
 
@@ -129,7 +169,13 @@ claude mcp add modforge -- modforge-mcp
 (From a repo clone instead: `claude mcp add modforge -- node <abs-path>/src/mcp/server.ts`.)
 
 Any MCP-capable client works the same way -- Cursor, Copilot, or your own agent: point it
-at `src/mcp/server.ts` over stdio.
+at `src/mcp/server.ts` over stdio. Responses are budgeted for agent context windows:
+`modforge_api_delta` caps its lists by default and reports `truncated`/`returned` counts
+(raise with `maxItemsPerList`), and `modforge_bridge_report` omits per-finding audit
+chains unless you pass `includeChains: true`. The server honors `MODFORGE_OFFLINE`.
+
+For wiring the server into an agent's actual porting loop -- which tool to call when, and
+how to stay inside a context budget -- see [docs/AGENT-PLAYBOOK.md](docs/AGENT-PLAYBOOK.md).
 
 ## Validated against reality
 
@@ -137,16 +183,24 @@ Correctness is the product, so ModForge is scored against real artifacts and rea
 work, not synthetic benchmarks:
 
 - The classfile parser (every constant-pool tag through Java 25, zero dependencies) reads
-  all 10,152 classes of the 26.1.2 client jar in ~500ms with zero errors.
-- Bulk-bridging the entire 1.21.11 class surface to 26.1.2 resolves 91.5% of classes EXACT
-  in 16ms.
+  all 10,152 classes of the 26.1.2 client jar in ~0.6s with zero errors.
+- Bulk-bridging the entire 1.21.11 class surface (9,720 classes) to 26.1.2 resolves 91.5%
+  of classes EXACT in under 20ms once the indexes are built.
 - A real-mod run on AppleSkin: 453 references -> 402 EXACT, 29 CANDIDATE, 22 UNRESOLVED --
-  and every UNRESOLVED is a genuine same-arity overload where guessing would be wrong.
-- The standing validation gate scores ModForge's EXACT set against AppleSkin's actual
-  human-written port commit: **100% EXACT precision** -- and the engine surfaced a hotfix
-  rename (`GuiGraphics -> GuiGraphicsExtractor` in 26.1.2) that the merged human port had
-  missed.
-- 30/30 tests passing, strict TypeScript (`tsc`) clean across the repo.
+  and every UNRESOLVED states its precise reason: 16 are method-overload ambiguities the
+  data cannot disambiguate (where guessing would be wrong), 3 are non-Minecraft classes
+  (`com.mojang.datafixers`), and 3 are library-inherited methods (Netty's `ByteBuf`) that
+  the mappings never named.
+- Before a release I score ModForge's EXACT class renames for AppleSkin against the mod's
+  actual human-written port commit. (The corpus and answer key are real mod checkouts and
+  can't be redistributed, so this gate runs on my machine, not in the shipped test suite.)
+  Current result: of the 43 classes the human port renamed, 41 resolve EXACT and **zero
+  contradict the human port** -- 100% EXACT precision, 95.3% recall, at class level. The
+  same run surfaced a hotfix rename (`GuiGraphics -> GuiGraphicsExtractor` in 26.1.2) that
+  the merged human port had missed.
+- What you can reproduce directly: `npm test` (165/165 passing) and `npx tsc --noEmit`
+  (strict, clean) on a clone -- and any single EXACT in any report, because each one
+  carries its full audit chain and is verified against the real target jar.
 
 Any EXACT that contradicts what human porters actually did is a release blocker.
 
@@ -159,15 +213,19 @@ old jar's class hierarchy for inherited members and translating descriptors to d
 overloads. The **API Delta** engine parses two game jars with ModForge's own
 dependency-free classfile parser and diffs the API surface directly; renames ship only as
 evidence-labeled bijective candidates. All mappings and jars are fetched client-side from
-Mojang's official endpoints at runtime, sha1-verified, and cached -- never redistributed.
+the official sources (Mojang's piston-data, Fabric's maven) at runtime, sha1-verified,
+and cached -- never redistributed.
 Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/SPEC.md](docs/SPEC.md).
 
 ## Roadmap
 
 - Instruction-level mixin `@At` verification (a signature can match while the targeted
-  instruction is gone)
-- NeoForge convenience flow (mojmap-input mods skip the yarn hops)
-- Expanded validation corpus across more real ports
+  instruction is gone; the parser's Code-attribute scan that powers this already exists,
+  the wiring into `mixin-check` does not -- its output says so)
+- Fuller NeoForge flow (`bridge` already takes mojmap-source trees, autodetected;
+  `gradle-migrate` is still loom/Fabric-only)
+- Expanded validation corpus across more real ports (AppleSkin is scored today; Cloth
+  Config and Lithium are cloned and queued)
 
 ## Contributing and license
 
