@@ -213,18 +213,21 @@ async function cmdBridge(args: Args): Promise<void> {
     // proven. Idempotence bounds this — a pass that applies nothing ends it.
     const MAX_PASSES = 5;
     let totalApplied = 0;
-    let skippedCount = 0;
     const writtenFiles = new Set<string>();
     const fixById = new Map<string, AppliedFix>();
+    // Reasons an op was NOT applied, keyed by report-finding id: a planning skip
+    // (e.g. a pass-6 whole-file old-name-dangling refusal, a simple-name collision)
+    // or an apply-time refusal (drift, an unwritable file). Last pass wins, so the
+    // map reflects the FINAL state of each finding across the fixpoint.
+    const skipById = new Map<string, string>();
     for (let pass = 1; pass <= MAX_PASSES; pass++) {
       const { patchByFile } = pass === 1 ? first : runPass(true);
       const allOps: PatchOp[] = [];
-      skippedCount = 0;
       for (const [relFile, { absFile, items }] of patchByFile) {
         const text = readFileSync(absFile, 'utf8');
         const plan = planJavaPatches(text, relFile, adaptForPatching(text, relFile, items));
         allOps.push(...plan.ops);
-        skippedCount += plan.skipped.length;
+        for (const s of plan.skipped) skipById.set(s.findingId, s.reason);
       }
       const outcomes = applyToDisk(allOps, { root: dir });
       let applied = 0;
@@ -237,20 +240,27 @@ async function cmdBridge(args: Args): Promise<void> {
           // pass-1 report finding.
           fixById.set(op.findingId, { file: o.file, before: op.before, after: op.after });
         }
-        for (const r of o.refused) console.error(`modforge:   refused ${r.op.file}: ${r.reason}`);
+        for (const r of o.refused) skipById.set(r.op.findingId, r.reason);
       }
       totalApplied += applied;
       if (applied === 0) break;
     }
-    // Light up the report's applied-fix column for exactly what was rewritten.
-    for (const f of findings) {
-      const fix = fixById.get(f.id);
-      if (fix) f.appliedFix = fix;
+    // Annotate the pass-1 report findings with what ACTUALLY happened: applied
+    // fixes win; an EXACT finding that was withheld/refused carries its verbatim
+    // reason. Phantom skip ids (re-detections of already-patched names in a later
+    // pass) own no report finding and are dropped — they never inflate the count.
+    annotateApply(findings, fixById, skipById);
+    const review = summarizeApply(findings);
+    // Surface withheld/refused EXACT findings — grouped per file, one line each,
+    // reason verbatim — so an EXACT-but-not-applied finding is self-explaining.
+    for (const g of review.reviewByFile) {
+      console.error(`modforge: ${g.file === '' ? '(no source location)' : g.file}`);
+      for (const it of g.items) console.error(`modforge:   ${it.line !== undefined ? `L${it.line}: ` : ''}${it.reason}`);
     }
     console.error(
       `modforge: applied ${totalApplied} EXACT rewrite(s) across ${writtenFiles.size} file(s); ` +
-        `${skippedCount} finding(s) left for review (CANDIDATE/UNRESOLVED or not provably patchable). ` +
-        `Originals backed up under ${join(dir, '.modforge-backup')}`,
+        `${review.leftForReview} finding(s) left for review (CANDIDATE/UNRESOLVED or EXACT not provably patchable here).` +
+        (writtenFiles.size > 0 ? ` Originals backed up under ${join(dir, '.modforge-backup')}.` : ''),
     );
   }
 

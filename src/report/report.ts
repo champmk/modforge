@@ -76,7 +76,10 @@ export interface AppliedFix {
 /**
  * One report line: a resolution anchored to its source location.
  * Invariant: `appliedFix` may only ever be present on EXACT findings — the
- * patcher never touches CANDIDATE/UNRESOLVED (SPEC §5).
+ * patcher never touches CANDIDATE/UNRESOLVED (SPEC §5). `skipReason` is the
+ * mirror: a verbatim reason an EXACT finding was NOT auto-applied (withheld at
+ * planning or refused at apply). The two are mutually exclusive — a finding is
+ * either applied or carries the reason it was not.
  */
 export interface Finding {
   /** Content-derived stable id — see {@link findingId}. */
@@ -84,6 +87,13 @@ export interface Finding {
   source: FindingSource;
   resolution: Resolution;
   appliedFix?: AppliedFix;
+  /**
+   * Verbatim reason an EXACT finding was not auto-applied — set only on EXACT
+   * findings that produced no fix (a planning skip or an apply-time refusal).
+   * CANDIDATE/UNRESOLVED are self-explaining via their group + reason, so they
+   * never carry one.
+   */
+  skipReason?: string;
 }
 
 /** Confidence tallies. `total = exact + candidate + unresolved`. */
@@ -446,6 +456,84 @@ export function mergeReports(reports: readonly MigrationReport[]): MigrationRepo
 }
 
 // ---------------------------------------------------------------------------
+// Apply-phase annotation + truthful summary
+// ---------------------------------------------------------------------------
+
+/** One file's withheld/refused EXACT findings, reasons verbatim — for human output. */
+export interface ApplyReviewGroup {
+  /** Source file (normalized forward slashes; '' = no source location). */
+  file: string;
+  /** One entry per withheld/refused EXACT finding in this file, sorted. */
+  items: { line?: number; reason: string }[];
+}
+
+/**
+ * Truthful post-apply summary derived ENTIRELY from the annotated findings —
+ * never from a final-pass re-scan of the already-patched tree (that double-counts
+ * the very fixes the run applied). `applied + leftForReview === total`.
+ */
+export interface ApplyReview {
+  /** Findings that received an applied fix. */
+  applied: number;
+  /**
+   * Findings with no applied fix == CANDIDATE + UNRESOLVED + withheld/refused
+   * EXACT. This is the honest review remainder.
+   */
+  leftForReview: number;
+  /** Withheld/refused EXACT findings grouped per file (sorted), reasons verbatim. */
+  reviewByFile: ApplyReviewGroup[];
+}
+
+/**
+ * Annotate report findings IN PLACE with what the apply phase actually did:
+ * an applied fix wins; otherwise an EXACT finding that was withheld at planning
+ * or refused at apply carries the verbatim reason as `skipReason`. The maps are
+ * keyed by report-finding id. Reasons keyed by an id no finding owns (e.g. a
+ * phantom re-detection of an already-patched name in a later pass) are ignored —
+ * exactly the count that used to leak into "left for review".
+ */
+export function annotateApply(
+  findings: readonly Finding[],
+  fixes: ReadonlyMap<string, AppliedFix>,
+  skipReasons: ReadonlyMap<string, string>,
+): void {
+  for (const f of findings) {
+    const fix = fixes.get(f.id);
+    if (fix !== undefined) {
+      f.appliedFix = fix;
+      continue;
+    }
+    const reason = skipReasons.get(f.id);
+    if (reason !== undefined && f.resolution.confidence === 'EXACT') f.skipReason = reason;
+  }
+}
+
+/** Summarize the apply phase from the annotated findings (call after {@link annotateApply}). */
+export function summarizeApply(findings: readonly Finding[]): ApplyReview {
+  let applied = 0;
+  for (const f of findings) if (f.appliedFix !== undefined) applied++;
+
+  const byFile = new Map<string, { line?: number; reason: string }[]>();
+  for (const f of findings) {
+    if (f.skipReason === undefined) continue;
+    const key = f.source.file ?? '';
+    const arr = byFile.get(key) ?? [];
+    const item: { line?: number; reason: string } = { reason: f.skipReason };
+    if (f.source.line !== undefined) item.line = f.source.line;
+    arr.push(item);
+    byFile.set(key, arr);
+  }
+  const reviewByFile = [...byFile.entries()]
+    .sort((a, b) => cmpStr(a[0], b[0]))
+    .map(([file, items]) => ({
+      file,
+      items: items.sort((a, b) => (a.line ?? 0) - (b.line ?? 0) || cmpStr(a.reason, b.reason)),
+    }));
+
+  return { applied, leftForReview: findings.length - applied, reviewByFile };
+}
+
+// ---------------------------------------------------------------------------
 // Shared formatting
 // ---------------------------------------------------------------------------
 
@@ -595,6 +683,8 @@ export function renderTerminal(report: MigrationReport, opts: TerminalRenderOpti
           lines.push(
             `      fix applied: ${f.appliedFix.file}: ${JSON.stringify(f.appliedFix.before)} → ${JSON.stringify(f.appliedFix.after)}`,
           );
+        } else if (f.skipReason !== undefined) {
+          lines.push(`      not applied: ${f.skipReason}`);
         }
         for (const step of r.chain) lines.push(paint(ANSI.dim, `      · ${step}`));
       }
@@ -649,11 +739,13 @@ function mdFindingRow(f: Finding, conf: Confidence, withFixColumn: boolean): str
   if (conf === 'EXACT') {
     const to = r.to !== undefined ? mdCode(formatSymbol(r.to)) : '*missing — malformed EXACT resolution*';
     if (!withFixColumn) return `| ${loc} | ${surface} | ${from} | ${to} |`;
-    const fix =
+    const status =
       f.appliedFix !== undefined
         ? `${mdCode(f.appliedFix.file)}: ${mdCode(f.appliedFix.before)} → ${mdCode(f.appliedFix.after)}`
-        : '';
-    return `| ${loc} | ${surface} | ${from} | ${to} | ${fix} |`;
+        : f.skipReason !== undefined
+          ? `*withheld* — ${mdText(f.skipReason)}`
+          : '';
+    return `| ${loc} | ${surface} | ${from} | ${to} | ${status} |`;
   }
   if (conf === 'CANDIDATE') {
     const cands = (r.candidates ?? [])
@@ -664,11 +756,11 @@ function mdFindingRow(f: Finding, conf: Confidence, withFixColumn: boolean): str
   return `| ${loc} | ${surface} | ${from} | ${mdText(r.reason)} |`;
 }
 
-/** EXACT gets the 'applied fix' column only when at least one fix was applied. */
+/** EXACT gets the status column only when at least one fix was applied or withheld. */
 function mdTableHead(conf: Confidence, withFixColumn: boolean): string[] {
   if (conf === 'EXACT') {
     return withFixColumn
-      ? ['| line | surface | from | to | applied fix |', '|---|---|---|---|---|']
+      ? ['| line | surface | from | to | applied fix / withheld |', '|---|---|---|---|---|']
       : ['| line | surface | from | to |', '|---|---|---|---|'];
   }
   if (conf === 'CANDIDATE') {
@@ -713,7 +805,8 @@ export function renderMarkdown(report: MigrationReport): string {
   );
 
   const sorted = sortFindings(report.findings);
-  const hasFixes = sorted.some((f) => f.appliedFix !== undefined);
+  // The status column appears when any EXACT finding was applied OR withheld.
+  const hasFixes = sorted.some((f) => f.appliedFix !== undefined || f.skipReason !== undefined);
   for (const conf of CONFIDENCE_ORDER) {
     const group = sorted.filter((f) => f.resolution.confidence === conf);
     lines.push('');
@@ -849,6 +942,7 @@ function jFinding(f: Finding): Json {
   if (f.appliedFix !== undefined) {
     o['appliedFix'] = { file: f.appliedFix.file, before: f.appliedFix.before, after: f.appliedFix.after };
   }
+  if (f.skipReason !== undefined) o['skipReason'] = f.skipReason;
   return o;
 }
 
@@ -881,7 +975,8 @@ function jFinding(f: Finding): Json {
  *         reason,                                    // honest explanation, always present
  *         chain: [string, ...]                       // full audit trail in hop order
  *       },
- *       appliedFix?: { file, before, after }         // EXACT-only patcher output
+ *       appliedFix?: { file, before, after },        // EXACT-only patcher output
+ *       skipReason?: string                          // EXACT-only: why it was NOT auto-applied
  *     }
  *   ],
  *   gradle?: {                                       // build-script migration summary

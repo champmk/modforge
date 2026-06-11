@@ -29,7 +29,7 @@
  * the clock, randomness, or state outside its arguments (applyToDisk's file
  * I/O excepted, and that proceeds in sorted-path order).
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { Resolution } from '../core/model.ts';
 
@@ -792,6 +792,11 @@ function errMsg(e: unknown): string {
  * - Per file: ops are re-verified against the live on-disk text via
  *   `applyPatches`; any mismatch refuses the whole file (reported in the
  *   outcome, file untouched).
+ * - Per file: a write (or its preceding backup) that throws — read-only target,
+ *   external lock, ENOSPC — is caught and recorded as a refused outcome naming
+ *   the OS error; the file is left unchanged, any backup created on this run is
+ *   rolled back, and the batch continues. A failing file is honest output, not
+ *   an operational failure.
  * - Backups (default on): the original is copied to
  *   `<root>/.modforge-backup/<relpath>` BEFORE writing. An existing backup is
  *   never overwritten — it stays the pre-ModForge original across re-runs.
@@ -881,16 +886,48 @@ export function applyToDisk(ops: PatchOp[], opts: ApplyToDiskOptions = {}): File
       continue;
     }
 
-    const outcome: FileApplyOutcome = { file, absPath: abs, applied: result.applied, refused: [], written: true };
-    if (backup) {
-      const backupPath = join(root, BACKUP_DIR, rel);
-      mkdirSync(dirname(backupPath), { recursive: true });
-      // Keep the FIRST backup: it is the pre-ModForge original; re-runs must not clobber it.
-      if (!existsSync(backupPath)) copyFileSync(abs, backupPath);
-      outcome.backupPath = backupPath;
+    // Backup-then-write, with the write (and the backup that precedes it) wrapped
+    // so a per-file I/O failure — a read-only target, an AV/OneDrive lock, ENOSPC —
+    // becomes a refused outcome and the batch CONTINUES, never an unhandled
+    // mid-batch crash that leaves the tree half-patched with no record.
+    let createdBackup: string | undefined;
+    try {
+      let backupPath: string | undefined;
+      if (backup) {
+        backupPath = join(root, BACKUP_DIR, rel);
+        mkdirSync(dirname(backupPath), { recursive: true });
+        // Keep the FIRST backup: it is the pre-ModForge original; re-runs must not clobber it.
+        if (!existsSync(backupPath)) {
+          copyFileSync(abs, backupPath);
+          createdBackup = backupPath;
+        }
+      }
+      writeFileSync(abs, result.text, 'utf8');
+      const outcome: FileApplyOutcome = { file, absPath: abs, applied: result.applied, refused: [], written: true };
+      if (backupPath !== undefined) outcome.backupPath = backupPath;
+      outcomes.push(outcome);
+    } catch (e) {
+      // Roll back a backup created on THIS run: the file was never modified, so a
+      // leftover backup would falsely imply it was patched. A pre-existing backup
+      // (from an earlier successful run) is left untouched.
+      if (createdBackup !== undefined) {
+        try {
+          rmSync(createdBackup);
+        } catch {
+          /* best effort — the live file was not modified regardless */
+        }
+      }
+      outcomes.push({
+        file,
+        absPath: abs,
+        applied: [],
+        refused: [...fileOps].sort(byOpOrder).map((op) => ({
+          op,
+          reason: `file could not be written: ${errMsg(e)} — left unchanged; fix the permission or lock and re-run`,
+        })),
+        written: false,
+      });
     }
-    writeFileSync(abs, result.text, 'utf8');
-    outcomes.push(outcome);
   }
   return outcomes;
 }
