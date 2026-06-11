@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--offline` (and the `MODFORGE_OFFLINE` env var, honored by the MCP server
+  too): a warm cache works with zero network; a cold cache fails with one line
+  naming the missing artifact.
+- Namespace autodetect: scanning a mojmap-source (NeoForge/multiloader) tree
+  with no `--namespace` flag no longer dead-ends in ~100% UNRESOLVED — the
+  bridge probes both lookup tables and announces its pick with an override
+  hint. Explicit flags are always respected.
+- `docs/AGENT-PLAYBOOK.md`: wiring the MCP server into an agent's porting loop
+  within a context budget.
+
 - `modforge bridge --apply`: writes EXACT rewrites to disk — span-verified,
   all-or-nothing per file, originals backed up under `.modforge-backup/`,
   iterates to a fixpoint (a rewrite held back by a name collision applies once
@@ -20,6 +30,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Source-namespace (mojmap) member resolution applies the same disambiguation
+  rigor as the yarn path: descriptor first, then callsite arity — a 0-arg
+  instance call can no longer be certified EXACT as a 1-arg static, and
+  same-name overloads resolve only when the evidence singles one out.
+  Callsite arity counting treats ambiguous `f(a < b, c > d)` shapes as
+  uncountable instead of guessing, and dotted type-witnesses
+  (`Map.<String,Integer>of(k, v)`) count correctly.
+- `bridge --apply` reporting is truthful end to end: "left for review" is the
+  real remainder, EXACT findings withheld or refused print their verbatim
+  reasons per file (and carry a `skipReason` in the JSON report), and a
+  read-only or locked file becomes a per-file refusal instead of a mid-batch
+  crash.
+- Backups moved out of the source root to `<scanDir>/.modforge/backup/` so
+  Gradle and IDEs never compile them; legacy `.modforge-backup` dirs are left
+  untouched and noted once.
+- A `bridge` between two post-era versions points at `modforge delta` instead
+  of suggesting the same failing command back.
+- Typo'd flags exit 2 with a did-you-mean instead of being silently ignored;
+  MCP requests with unknown argument keys fail fast against the declared
+  schema.
 - Installing from a git clone or `github:` spec now works: a `prepare` script
   builds `dist/` on install (previously the bins pointed at a `dist/` that was
   never built, and the install succeeded silently).
@@ -59,6 +89,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The terminal report repeats hundreds of identical CANDIDATE evidence blocks
+  no more: each unique decision renders once with an `N sites:` list, headings
+  count real judgment calls, and the report ends with the verdict summary and
+  plain-language next steps instead of scrolling off on the last UNRESOLVED
+  entry.
 - MCP responses are budgeted for agent context windows: `modforge_api_delta`
   caps its lists by default and reports `truncated`/`returned` counts (raise
   with `maxItemsPerList`); `modforge_bridge_report` omits per-finding audit
